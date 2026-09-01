@@ -1,0 +1,31 @@
+services:
+
+  postgres:
+
+    image: postgres:16
+
+    container_name: anomaly_postgres
+
+
+    environment:
+
+      POSTGRES_DB: anomaly_db
+
+      POSTGRES_USER: anomaly_user
+
+      POSTGRES_PASSWORD: anomaly_password
+
+
+    ports:
+
+      - "5432:5432"
+
+
+    volumes:
+
+      - postgres_data:/var/lib/postgresql/data
+
+
+volumes:
+
+  postgres_data:

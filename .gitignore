@@ -1,0 +1,30 @@
+# Python virtual environment
+
+.venv/
+
+
+# Python cache
+
+__pycache__/
+
+*.pyc
+
+
+# Dataset
+
+data/
+
+
+# Trained models
+
+models/
+
+
+# Environment variables / secrets
+
+.env
+
+
+# Logs
+
+*.log
