@@ -1,23 +1,13 @@
 from pathlib import Path
-
 import psycopg2
-
-
 
 DATA_DIR = Path("data")
 
-
-CATEGORIES = [
-
-    "bottle",
-
-    "metal_nut",
-
-    "screw",
-
-]
-
-
+CATEGORIES = sorted([
+    path.name 
+    for path in DATA_DIR.iterdir()
+    if path.is_dir()
+])
 
 def get_connection():
 
