@@ -1,0 +1,6 @@
+{
+    "category": "bottle",
+    "threshold": 0.12493164092302322,
+    "threshold_percentile": 95,
+    "test_f1": 0.33766233766233766
+}
