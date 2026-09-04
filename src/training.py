@@ -1,7 +1,8 @@
 from pathlib import Path
 
-import json
+import argparse
 
+import json
 
 import numpy as np
 
@@ -13,273 +14,152 @@ from tensorflow.keras import layers, models
 
 from sklearn.metrics import f1_score
 
-
-
-# ==========================================================
-
-# CONFIG
-
-# ==========================================================
+from sklearn.model_selection import train_test_split
 
 
 IMG_SIZE = 128
 
 BATCH_SIZE = 16
 
-EPOCHS = 2
+EPOCHS = 30
 
+VAL_SIZE = 0.2
 
-CATEGORY = "bottle"
+THRESHOLD_PERCENTILE = 95
 
-
-MODEL_DIR = Path("models") / CATEGORY
-
-MODEL_DIR.mkdir(parents=True, exist_ok=True)
-
-
-
-# ==========================================================
-
-# DATABASE
-
-# ==========================================================
+RANDOM_STATE = 42
 
 
 def get_connection():
 
     return psycopg2.connect(
 
-        host="localhost",
+        host="localhost", port=5432, dbname="anomaly_db",
 
-        port=5432,
-
-        dbname="anomaly_db",
-
-        user="anomaly_user",
-
-        password="anomaly_password",
+        user="anomaly_user", password="anomaly_password"
 
     )
 
 
+def get_categories():
+
+    with get_connection() as conn:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT DISTINCT category
+
+                FROM images
+
+                WHERE split='train' AND is_anomaly=FALSE
+
+                ORDER BY category;
+
+            """)
+
+            return [row[0] for row in cur.fetchall()]
+
 
 def get_train_paths(category):
 
-    connection = get_connection()
+    with get_connection() as conn:
 
-    cursor = connection.cursor()
+        with conn.cursor() as cur:
 
+            cur.execute("""
 
-    query = """
+                SELECT image_path FROM images
 
-        SELECT image_path
+                WHERE category=%s AND split='train' AND is_anomaly=FALSE
 
-        FROM images
+                ORDER BY image_path;
 
-        WHERE category = %s
+            """, (category,))
 
-          AND split = 'train'
-
-          AND is_anomaly = FALSE
-
-        ORDER BY image_path;
-
-    """
-
-
-    cursor.execute(query, (category,))
-
-    rows = cursor.fetchall()
-
-
-    cursor.close()
-
-    connection.close()
-
-
-    return [row[0] for row in rows]
-
+            return [row[0] for row in cur.fetchall()]
 
 
 def get_test_data(category):
 
-    connection = get_connection()
+    with get_connection() as conn:
 
-    cursor = connection.cursor()
+        with conn.cursor() as cur:
 
+            cur.execute("""
 
-    query = """
+                SELECT image_path, is_anomaly FROM images
 
-        SELECT image_path, is_anomaly
+                WHERE category=%s AND split='test'
 
-        FROM images
+                ORDER BY image_path;
 
-        WHERE category = %s
+            """, (category,))
 
-          AND split = 'test'
+            rows = cur.fetchall()
 
-        ORDER BY image_path;
-
-    """
-
-
-    cursor.execute(query, (category,))
-
-    rows = cursor.fetchall()
-
-
-    cursor.close()
-
-    connection.close()
-
-
-    paths = [row[0] for row in rows]
-
-    labels = np.array([int(row[1]) for row in rows])
-
-
-    return paths, labels
-
-
-
-# ==========================================================
-
-# IMAGE LOADING
-
-# ==========================================================
+    return [r[0] for r in rows], np.array([int(r[1]) for r in rows])
 
 
 def decode_image(path):
 
     img = tf.io.read_file(path)
 
-    img = tf.image.decode_image(
-
-        img,
-
-        channels=3,
-
-        expand_animations=False
-
-    )
-
+    img = tf.image.decode_image(img, channels=3, expand_animations=False)
 
     img = tf.image.resize(img, (IMG_SIZE, IMG_SIZE))
-
 
     return tf.cast(img, tf.float32) / 255.0
 
 
-
-def train_parser(path):
+def autoencoder_parser(path):
 
     img = decode_image(path)
 
     return img, img
 
 
-
-def test_parser(path):
+def image_parser(path):
 
     return decode_image(path)
 
 
-
-def build_train_dataset(paths):
-
-    ds = tf.data.Dataset.from_tensor_slices(paths)
-
-
-    ds = ds.shuffle(1000)
-
-
-    ds = ds.map(
-
-        train_parser,
-
-        num_parallel_calls=tf.data.AUTOTUNE
-
-    )
-
-
-    return ds.batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
-
-
-
-def build_test_dataset(paths):
+def build_autoencoder_dataset(paths, shuffle=False):
 
     ds = tf.data.Dataset.from_tensor_slices(paths)
 
+    if shuffle:
 
-    ds = ds.map(
+        ds = ds.shuffle(len(paths), seed=RANDOM_STATE)
 
-        test_parser,
-
-        num_parallel_calls=tf.data.AUTOTUNE
-
-    )
+    return ds.map(autoencoder_parser, num_parallel_calls=tf.data.AUTOTUNE).batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
 
 
-    return ds.batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+def build_image_dataset(paths):
+
+    return tf.data.Dataset.from_tensor_slices(paths).map(
+
+        image_parser, num_parallel_calls=tf.data.AUTOTUNE
+
+    ).batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
 
 
+def build_cae():
 
-# ==========================================================
+    inputs = layers.Input((IMG_SIZE, IMG_SIZE, 3))
 
-# CAE MODEL
+    x = inputs
 
-# ==========================================================
+    for filters in [32, 64, 128, 256]:
 
+        x = layers.Conv2D(filters, 3, padding="same")(x)
 
-def build_cae(img_size=128):
+        x = layers.BatchNormalization()(x)
 
+        x = layers.ReLU()(x)
 
-    inputs = layers.Input(
-
-        shape=(img_size, img_size, 3)
-
-    )
-
-
-    # Encoder
-
-    x = layers.Conv2D(32, 3, padding="same")(inputs)
-
-    x = layers.BatchNormalization()(x)
-
-    x = layers.ReLU()(x)
-
-    x = layers.MaxPooling2D(2)(x)
-
-
-    x = layers.Conv2D(64, 3, padding="same")(x)
-
-    x = layers.BatchNormalization()(x)
-
-    x = layers.ReLU()(x)
-
-    x = layers.MaxPooling2D(2)(x)
-
-
-    x = layers.Conv2D(128, 3, padding="same")(x)
-
-    x = layers.BatchNormalization()(x)
-
-    x = layers.ReLU()(x)
-
-    x = layers.MaxPooling2D(2)(x)
-
-
-    x = layers.Conv2D(256, 3, padding="same")(x)
-
-    x = layers.BatchNormalization()(x)
-
-    x = layers.ReLU()(x)
-
-    x = layers.MaxPooling2D(2)(x)
-
-
-    # Bottleneck
+        x = layers.MaxPooling2D(2)(x)
 
     x = layers.Conv2D(512, 3, padding="same")(x)
 
@@ -287,353 +167,122 @@ def build_cae(img_size=128):
 
     x = layers.ReLU()(x)
 
+    for filters in [256, 128, 64, 32]:
 
-    # Decoder
+        x = layers.Conv2DTranspose(filters, 3, strides=2, padding="same")(x)
 
-    x = layers.Conv2DTranspose(
+        x = layers.ReLU()(x)
 
-        256, 3, strides=2, padding="same"
-
-    )(x)
-
-    x = layers.ReLU()(x)
-
-
-    x = layers.Conv2DTranspose(
-
-        128, 3, strides=2, padding="same"
-
-    )(x)
-
-    x = layers.ReLU()(x)
-
-
-    x = layers.Conv2DTranspose(
-
-        64, 3, strides=2, padding="same"
-
-    )(x)
-
-    x = layers.ReLU()(x)
-
-
-    x = layers.Conv2DTranspose(
-
-        32, 3, strides=2, padding="same"
-
-    )(x)
-
-    x = layers.ReLU()(x)
-
-
-    outputs = layers.Conv2D(
-
-        3,
-
-        3,
-
-        activation="sigmoid",
-
-        padding="same"
-
-    )(x)
-
+    outputs = layers.Conv2D(3, 3, activation="sigmoid", padding="same")(x)
 
     return models.Model(inputs, outputs)
 
 
-
-# ==========================================================
-
-# LOSS
-
-# ==========================================================
-
-
 def ssim_loss(y_true, y_pred):
 
-
-    ssim = tf.image.ssim(
-
-        y_true,
-
-        y_pred,
-
-        max_val=1.0
-
-    )
-
-
-    return 1 - tf.reduce_mean(ssim)
-
+    return 1 - tf.reduce_mean(tf.image.ssim(y_true, y_pred, max_val=1.0))
 
 
 def hybrid_loss(y_true, y_pred):
 
+    mse = tf.reduce_mean(tf.square(y_true - y_pred))
 
-    mse = tf.reduce_mean(
-
-        tf.square(y_true - y_pred)
-
-    )
-
-
-    return (
-
-        0.7 * mse
-
-        + 0.3 * ssim_loss(y_true, y_pred)
-
-    )
-
-
-
-# ==========================================================
-
-# ANOMALY SCORE
-
-# ==========================================================
+    return 0.7 * mse + 0.3 * ssim_loss(y_true, y_pred)
 
 
 def blur(img):
 
-    return tf.nn.avg_pool(
-
-        img,
-
-        ksize=3,
-
-        strides=1,
-
-        padding="SAME"
-
-    )
-
+    return tf.nn.avg_pool(img, ksize=3, strides=1, padding="SAME")
 
 
 def compute_scores(model, dataset):
 
-
     scores = []
-
 
     for batch in dataset:
 
-
-        reconstruction = model.predict(
-
-            batch,
-
-            verbose=0
-
-        )
-
+        recon = model.predict(batch, verbose=0)
 
         batch_np = batch.numpy()
 
+        mse = np.mean(np.square(batch_np - recon), axis=(1, 2, 3))
 
-        mse = np.mean(
+        l1 = np.mean(np.abs(batch_np - recon), axis=(1, 2, 3))
 
-            np.square(batch_np - reconstruction),
-
-            axis=(1, 2, 3)
-
-        )
-
-
-        l1 = np.mean(
-
-            np.abs(batch_np - reconstruction),
-
-            axis=(1, 2, 3)
-
-        )
-
-
-        ssim = tf.image.ssim(
-
-            batch,
-
-            reconstruction,
-
-            max_val=1.0
-
-        ).numpy()
-
-
-        blur_true = blur(batch).numpy()
-
-        blur_recon = blur(reconstruction).numpy()
-
+        ssim = tf.image.ssim(batch, recon, max_val=1.0).numpy()
 
         blur_diff = np.mean(
 
-            np.abs(blur_true - blur_recon),
+            np.abs(blur(batch).numpy() - blur(recon).numpy()),
 
             axis=(1, 2, 3)
 
         )
 
-
-        hybrid = (
-
-            0.4 * mse
-
-            + 0.2 * l1
-
-            + 0.2 * (1 - ssim)
-
-            + 0.2 * blur_diff
-
-        )
-
-
-        scores.extend(hybrid)
-
+        scores.extend(0.4 * mse + 0.2 * l1 + 0.2 * (1 - ssim) + 0.2 * blur_diff)
 
     return np.array(scores)
 
 
-
-# ==========================================================
-
-# THRESHOLD
-
-# ==========================================================
-
-
-def find_best_threshold(labels, scores):
-
-
-    best_threshold = None
-
-    best_f1 = -1
-
-
-    thresholds = np.linspace(
-
-        scores.min(),
-
-        scores.max(),
-
-        300
-
-    )
-
-
-    for threshold in thresholds:
-
-
-        predictions = (
-
-            scores > threshold
-
-        ).astype(int)
-
-
-        score = f1_score(
-
-            labels,
-
-            predictions,
-
-            zero_division=0
-
-        )
-
-
-        if score > best_f1:
-
-            best_f1 = score
-
-            best_threshold = threshold
-
-
-    return best_threshold, best_f1
-
-
-
-# ==========================================================
-
-# TRAINING
-
-# ==========================================================
-
-
 def train(category):
 
+    print(f"\n========== TRAINING: {category} ==========")
 
-    print(f"\nTraining category: {category}")
-
-
-    train_paths = get_train_paths(category)
+    all_train_paths = get_train_paths(category)
 
     test_paths, test_labels = get_test_data(category)
 
+    if len(all_train_paths) < 2:
 
-    print(
+        raise ValueError(f"Not enough training images for category '{category}'")
 
-        f"Training images: {len(train_paths)}"
+    train_paths, val_paths = train_test_split(
 
-    )
-
-
-    print(
-
-        f"Test images: {len(test_paths)}"
+        all_train_paths, test_size=VAL_SIZE, random_state=RANDOM_STATE
 
     )
 
+    print(f"Train: {len(train_paths)} | Validation: {len(val_paths)} | Test: {len(test_paths)}")
 
-    train_ds = build_train_dataset(train_paths)
+    train_ds = build_autoencoder_dataset(train_paths, shuffle=True)
 
-    test_ds = build_test_dataset(test_paths)
+    val_train_ds = build_autoencoder_dataset(val_paths)
 
+    val_score_ds = build_image_dataset(val_paths)
 
-    model = build_cae(IMG_SIZE)
+    test_ds = build_image_dataset(test_paths)
 
+    model = build_cae()
 
     model.compile(
 
-        optimizer=tf.keras.optimizers.Adam(
-
-            learning_rate=1e-3
-
-        ),
+        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
 
         loss=hybrid_loss
 
     )
 
-
     callbacks = [
 
         tf.keras.callbacks.EarlyStopping(
 
-            monitor="loss",
-
-            patience=10,
-
-            restore_best_weights=True
+            monitor="val_loss", patience=5, restore_best_weights=True
 
         ),
 
         tf.keras.callbacks.ReduceLROnPlateau(
 
-            monitor="loss",
-
-            factor=0.5,
-
-            patience=4
+            monitor="val_loss", factor=0.5, patience=3, min_lr=1e-6
 
         )
 
     ]
 
-
     model.fit(
 
         train_ds,
+
+        validation_data=val_train_ds,
 
         epochs=EPOCHS,
 
@@ -641,78 +290,82 @@ def train(category):
 
     )
 
+    print("\nCalculating validation threshold...")
 
-    print("\nCalculating anomaly scores...")
+    val_scores = compute_scores(model, val_score_ds)
 
+    threshold = float(np.percentile(val_scores, THRESHOLD_PERCENTILE))
 
-    scores = compute_scores(
+    print("Evaluating test dataset...")
 
-        model,
+    test_scores = compute_scores(model, test_ds)
 
-        test_ds
+    predictions = (test_scores > threshold).astype(int)
 
-    )
+    f1 = f1_score(test_labels, predictions, zero_division=0)
 
+    model_dir = Path("models") / category
 
-    threshold, f1 = find_best_threshold(
+    model_dir.mkdir(parents=True, exist_ok=True)
 
-        test_labels,
+    model_path = model_dir / "cae.keras"
 
-        scores
-
-    )
-
-
-    print(f"Threshold: {threshold:.6f}")
-
-    print(f"F1 score: {f1:.4f}")
-
-
-    # Save model
-
-    model_path = MODEL_DIR / "cae.keras"
-
+    threshold_path = model_dir / "threshold.json"
 
     model.save(model_path)
 
-
-    # Save threshold
-
-    threshold_path = MODEL_DIR / "threshold.json"
-
-
     with open(threshold_path, "w") as file:
 
-        json.dump(
+        json.dump({
 
-            {
+            "category": category,
 
-                "category": category,
+            "threshold": threshold,
 
-                "threshold": float(threshold)
+            "threshold_percentile": THRESHOLD_PERCENTILE,
 
-            },
+            "test_f1": float(f1)
 
-            file,
+        }, file, indent=4)
 
-            indent=4
+    print(f"Threshold: {threshold:.6f}")
 
-        )
+    print(f"Test F1:   {f1:.4f}")
+
+    print(f"Model:     {model_path}")
+
+    print(f"Threshold: {threshold_path}")
+
+    return {"category": category, "threshold": threshold, "f1": float(f1)}
 
 
-    print(f"\nModel saved to: {model_path}")
+def main():
 
-    print(f"Threshold saved to: {threshold_path}")
+    parser = argparse.ArgumentParser()
 
+    parser.add_argument(
 
+        "category", nargs="?",
 
-# ==========================================================
+        help="Category to train. If omitted, all categories in PostgreSQL are trained."
 
-# MAIN
+    )
 
-# ==========================================================
+    args = parser.parse_args()
+
+    categories = [args.category] if args.category else get_categories()
+
+    if not categories:
+
+        raise ValueError("No training categories found in PostgreSQL.")
+
+    print("Categories:", ", ".join(categories))
+
+    for category in categories:
+
+        train(category)
 
 
 if __name__ == "__main__":
 
-    train(CATEGORY)
+    main()
