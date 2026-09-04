@@ -14,6 +14,10 @@ class TrainingRequest(BaseModel):
 
     category: str
 
+    epochs: int = 30
+
+    save_model: bool = True
+
 
 class PredictionRequest(BaseModel):
 
@@ -35,7 +39,15 @@ def training_endpoint(request: TrainingRequest):
 
     try:
 
-        result = train(request.category)
+        result = train(
+
+            request.category,
+
+            epochs=request.epochs,
+
+            save_model=request.save_model
+
+        )
 
         return {
 
