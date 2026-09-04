@@ -29,3 +29,6 @@ models/
 
 *.log
 *.swp
+
+.pytest_cache/
+.DS_Store
