@@ -1,0 +1,7 @@
+{
+    "category": "pill",
+    "threshold": 0.1453484445810318,
+    "threshold_source": "labeled_calibration_split",
+    "calibration_fraction": 0.3,
+    "calibration_f1": 0.9010989010989011
+}

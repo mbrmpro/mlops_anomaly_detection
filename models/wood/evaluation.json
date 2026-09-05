@@ -1,0 +1,44 @@
+{
+    "category": "wood",
+    "saved_threshold_full_test": {
+        "threshold": 0.0957091823220253,
+        "samples": 79,
+        "accuracy": 0.8987341772151899,
+        "precision": 0.8823529411764706,
+        "recall": 1.0,
+        "f1": 0.9375,
+        "auroc": 0.8807017543859649,
+        "tn": 11,
+        "fp": 8,
+        "fn": 0,
+        "tp": 60
+    },
+    "optimistic_full_test": {
+        "threshold": 0.09939930588006973,
+        "samples": 79,
+        "accuracy": 0.9113924050632911,
+        "precision": 0.8955223880597015,
+        "recall": 1.0,
+        "f1": 0.9448818897637795,
+        "auroc": 0.8807017543859649,
+        "tn": 12,
+        "fp": 7,
+        "fn": 0,
+        "tp": 60
+    },
+    "calibrated_holdout": {
+        "threshold": 0.0957091823220253,
+        "samples": 56,
+        "accuracy": 0.9107142857142857,
+        "precision": 0.8958333333333334,
+        "recall": 1.0,
+        "f1": 0.945054945054945,
+        "auroc": 0.8872987477638641,
+        "tn": 8,
+        "fp": 5,
+        "fn": 0,
+        "tp": 43
+    },
+    "calibration_samples": 23,
+    "holdout_samples": 56
+}

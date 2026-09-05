@@ -1,0 +1,7 @@
+{
+    "category": "wood",
+    "threshold": 0.0957091823220253,
+    "threshold_source": "labeled_calibration_split",
+    "calibration_fraction": 0.3,
+    "calibration_f1": 0.918918918918919
+}

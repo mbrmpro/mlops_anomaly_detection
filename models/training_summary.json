@@ -1,0 +1,24 @@
+[
+    {
+        "category": "pill",
+        "epochs_requested": 30,
+        "epochs_completed": 30,
+        "threshold": 0.1453484445810318,
+        "threshold_source": "labeled_calibration_split",
+        "calibration_fraction": 0.3,
+        "calibration_f1": 0.9010989010989011,
+        "holdout_metrics": {
+            "accuracy": 0.811965811965812,
+            "balanced_accuracy": 0.5025252525252525,
+            "precision": 0.8468468468468469,
+            "recall": 0.9494949494949495,
+            "f1": 0.8952380952380953,
+            "auroc": 0.271604938271605,
+            "tn": 1,
+            "fp": 17,
+            "fn": 5,
+            "tp": 94
+        },
+        "model_saved": true
+    }
+]
