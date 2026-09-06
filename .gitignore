@@ -1,34 +1,33 @@
 # Python virtual environment
-
 .venv/
 
 
 # Python cache
-
 __pycache__/
-
 *.pyc
 
 
 # Dataset
-
 data/
+data
 
 
 # Trained models
+models/
 
-#models/
+
+# Local MLflow storage
+mlflow.db
+mlruns/
+mlartifacts/
 
 
 # Environment variables / secrets
-
 .env
 
 
-# Logs
-
+# Logs and temporary files
 *.log
 *.swp
-
 .pytest_cache/
 .DS_Store
