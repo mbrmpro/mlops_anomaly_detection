@@ -30,6 +30,11 @@ from sklearn.metrics import (
 from sklearn.model_selection import train_test_split
 from tensorflow.keras import layers, models
 
+import mlflow
+import mlflow.tensorflow
+
+from mlflow.models import ModelSignature
+from mlflow.types.schema import Schema, TensorSpec
 
 # ==========================================================
 # CONFIG
@@ -42,11 +47,41 @@ VAL_SIZE = 0.20
 CALIBRATION_SIZE = 0.30
 RANDOM_STATE = 42
 PROJECT_CATEGORIES = ("bottle", "wood", "pill")
+LEARNING_RATE = 1e-3
+
+MLFLOW_TRACKING_URI = os.getenv(
+    "MLFLOW_TRACKING_URI",
+    "sqlite:///mlflow.db",
+)
+
+MLFLOW_EXPERIMENT_NAME = os.getenv(
+    "MLFLOW_EXPERIMENT_NAME",
+    "anomaly-detection-cae",
+)
+
+# ==========================================================
+# MLFLOW CONFIGURATION
+# ==========================================================
+
+
+def configure_mlflow():
+    """Configure MLflow experiment tracking."""
+
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+
+    mlflow.tensorflow.autolog(
+        log_models=False,
+        log_datasets=False,
+        log_every_epoch=True,
+        checkpoint=False,
+    )
 
 
 # ==========================================================
 # POSTGRESQL CONNECTION AND QUERIES
 # ==========================================================
+
 
 def get_connection():
     return psycopg2.connect(
@@ -61,14 +96,12 @@ def get_connection():
 def get_categories():
     with get_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute(
-                """
+            cursor.execute("""
                 SELECT DISTINCT category
                 FROM images
                 WHERE split = 'train' AND is_anomaly = FALSE
                 ORDER BY category;
-                """
-            )
+                """)
             return [row[0] for row in cursor.fetchall()]
 
 
@@ -112,6 +145,7 @@ def get_test_data(category):
 # IMAGE LOADING
 # ==========================================================
 
+
 def decode_image(path):
     image = tf.io.read_file(path)
     image = tf.image.decode_image(image, channels=3, expand_animations=False)
@@ -133,6 +167,7 @@ def image_parser(path):
 # DATASETS
 # ==========================================================
 
+
 def build_autoencoder_dataset(paths, shuffle=False):
     dataset = tf.data.Dataset.from_tensor_slices(paths)
     if shuffle:
@@ -140,8 +175,7 @@ def build_autoencoder_dataset(paths, shuffle=False):
             len(paths), seed=RANDOM_STATE, reshuffle_each_iteration=True
         )
     return (
-        dataset
-        .map(autoencoder_parser, num_parallel_calls=tf.data.AUTOTUNE)
+        dataset.map(autoencoder_parser, num_parallel_calls=tf.data.AUTOTUNE)
         .batch(BATCH_SIZE)
         .prefetch(tf.data.AUTOTUNE)
     )
@@ -159,6 +193,7 @@ def build_image_dataset(paths):
 # ==========================================================
 # CONVOLUTIONAL AUTOENCODER
 # ==========================================================
+
 
 def build_cae(img_size=IMG_SIZE):
     inputs = layers.Input(shape=(img_size, img_size, 3))
@@ -204,6 +239,7 @@ def build_cae(img_size=IMG_SIZE):
 # LOSS: MSE + SSIM
 # ==========================================================
 
+
 def ssim_loss(y_true, y_pred):
     return 1.0 - tf.reduce_mean(tf.image.ssim(y_true, y_pred, max_val=1.0))
 
@@ -216,6 +252,7 @@ def hybrid_loss(y_true, y_pred):
 # ==========================================================
 # ANOMALY SCORES: MSE + L1 + (1 - SSIM) + BLUR DIFFERENCE
 # ==========================================================
+
 
 def blur(images):
     return tf.nn.avg_pool(images, ksize=3, strides=1, padding="SAME")
@@ -232,12 +269,7 @@ def compute_scores(model, dataset):
         blur_difference = tf.reduce_mean(
             tf.abs(blur(batch) - blur(reconstruction)), axis=(1, 2, 3)
         )
-        hybrid = (
-            0.4 * mse
-            + 0.2 * l1
-            + 0.2 * (1.0 - ssim)
-            + 0.2 * blur_difference
-        )
+        hybrid = 0.4 * mse + 0.2 * l1 + 0.2 * (1.0 - ssim) + 0.2 * blur_difference
 
         components["mse"].extend(mse.numpy())
         components["l1"].extend(l1.numpy())
@@ -254,6 +286,7 @@ def compute_scores(model, dataset):
 # ==========================================================
 # THRESHOLD OPTIMIZER
 # ==========================================================
+
 
 def find_best_threshold(labels, scores):
     """Optimize F1 on calibration data, never on final holdout data."""
@@ -272,11 +305,10 @@ def find_best_threshold(labels, scores):
 # FINAL EVALUATION
 # ==========================================================
 
+
 def evaluate(labels, scores, threshold):
     predictions = (scores > threshold).astype(int)
-    tn, fp, fn, tp = confusion_matrix(
-        labels, predictions, labels=[0, 1]
-    ).ravel()
+    tn, fp, fn, tp = confusion_matrix(labels, predictions, labels=[0, 1]).ravel()
     return {
         "accuracy": float(accuracy_score(labels, predictions)),
         "balanced_accuracy": float(balanced_accuracy_score(labels, predictions)),
@@ -295,7 +327,8 @@ def evaluate(labels, scores, threshold):
 # TRAIN ONE CATEGORY
 # ==========================================================
 
-def train(category, epochs=EPOCHS, save_model=True):
+
+def _train_category(category, epochs=EPOCHS, save_model=True):
     print(f"\n========== TRAINING: {category} ==========")
     tf.keras.backend.clear_session()
     tf.keras.utils.set_random_seed(RANDOM_STATE)
@@ -328,6 +361,24 @@ def train(category, epochs=EPOCHS, save_model=True):
         f"Calibration: {len(calibration_paths)} | Holdout: {len(holdout_paths)}"
     )
 
+    mlflow.log_params(
+        {
+            "category": category,
+            "model_type": "convolutional_autoencoder",
+            "image_size": IMG_SIZE,
+            "batch_size": BATCH_SIZE,
+            "epochs_requested": epochs,
+            "learning_rate": LEARNING_RATE,
+            "validation_fraction": VAL_SIZE,
+            "calibration_fraction": CALIBRATION_SIZE,
+            "random_state": RANDOM_STATE,
+            "train_images": len(train_paths),
+            "validation_images": len(validation_paths),
+            "calibration_images": len(calibration_paths),
+            "holdout_images": len(holdout_paths),
+        }
+    )
+
     train_dataset = build_autoencoder_dataset(train_paths, shuffle=True)
     validation_dataset = build_autoencoder_dataset(validation_paths)
     calibration_dataset = build_image_dataset(calibration_paths)
@@ -335,7 +386,7 @@ def train(category, epochs=EPOCHS, save_model=True):
 
     model = build_cae(IMG_SIZE)
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
+        optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE),
         loss=hybrid_loss,
     )
     callbacks = [
@@ -380,6 +431,7 @@ def train(category, epochs=EPOCHS, save_model=True):
     model_dir = Path("models") / category
     result = {
         "category": category,
+        "mlflow_run_id": mlflow.active_run().info.run_id,
         "epochs_requested": int(epochs),
         "epochs_completed": int(len(history.history["loss"])),
         "threshold": float(threshold),
@@ -389,6 +441,41 @@ def train(category, epochs=EPOCHS, save_model=True):
         "holdout_metrics": metrics,
         "model_saved": bool(save_model),
     }
+
+    mlflow.log_metrics(
+        {
+            "epochs_completed": result["epochs_completed"],
+            "best_validation_loss": float(min(history.history["val_loss"])),
+            "anomaly_threshold": float(threshold),
+            "calibration_f1": float(calibration_f1),
+            "holdout_accuracy": metrics["accuracy"],
+            "holdout_balanced_accuracy": metrics["balanced_accuracy"],
+            "holdout_precision": metrics["precision"],
+            "holdout_recall": metrics["recall"],
+            "holdout_f1": metrics["f1"],
+            "holdout_auroc": metrics["auroc"],
+            "holdout_tn": metrics["tn"],
+            "holdout_fp": metrics["fp"],
+            "holdout_fn": metrics["fn"],
+            "holdout_tp": metrics["tp"],
+        }
+    )
+
+    mlflow.log_dict(
+        result,
+        "reports/evaluation.json",
+    )
+
+    mlflow.log_dict(
+        {
+            "category": category,
+            "threshold": float(threshold),
+            "threshold_source": "labeled_calibration_split",
+            "calibration_fraction": CALIBRATION_SIZE,
+            "calibration_f1": float(calibration_f1),
+        },
+        "reports/threshold.json",
+    )
 
     if save_model:
         model_dir.mkdir(parents=True, exist_ok=True)
@@ -416,9 +503,34 @@ def train(category, epochs=EPOCHS, save_model=True):
     return result
 
 
+def train(category, epochs=EPOCHS, save_model=True):
+    """Train one category inside a dedicated MLflow run."""
+
+    configure_mlflow()
+
+    with mlflow.start_run(run_name=f"cae-{category}") as run:
+        mlflow.set_tags(
+            {
+                "category": category,
+                "pipeline_stage": "training",
+                "model_family": "CAE",
+                "candidate_status": "candidate",
+            }
+        )
+
+        print(f"MLflow run: {run.info.run_id}")
+
+        return _train_category(
+            category=category,
+            epochs=epochs,
+            save_model=save_model,
+        )
+
+
 # ==========================================================
 # MAIN
 # ==========================================================
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -438,7 +550,9 @@ def main():
 
     categories = args.categories or list(PROJECT_CATEGORIES)
     available_categories = set(get_categories())
-    missing = [category for category in categories if category not in available_categories]
+    missing = [
+        category for category in categories if category not in available_categories
+    ]
     if missing:
         raise ValueError("Missing categories in PostgreSQL: " + ", ".join(missing))
 
