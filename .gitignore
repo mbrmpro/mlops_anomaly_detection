@@ -1,30 +1,44 @@
-# Python virtual environment
+# Python virtual environments
 .venv/
-
+venv/
 
 # Python cache
 __pycache__/
 *.pyc
 
-
 # Dataset
 data/
-data
 
+# --------------------------------------------------
+# Models
+# --------------------------------------------------
 
-# Trained models
-models/
+# Ignore Keras models by default
+models/**/*.keras
 
+# But track the selected trained bottle model
+!models/bottle/cae.keras
 
-# Local MLflow storage
-mlflow.db
-mlruns/
-mlartifacts/
+# Ignore backup model copies
+models/**/pre_mlflow_backup/
 
+# --------------------------------------------------
+# MLflow
+# --------------------------------------------------
 
-# Environment variables / secrets
+# We intentionally TRACK:
+#   mlflow.db
+#   mlruns/
+#   mlartifacts/
+#
+# because this repository contains the MLflow
+# experiment metadata and artifacts.
+
+# --------------------------------------------------
+# Environment / secrets
+# --------------------------------------------------
+
 .env
-
 
 # Logs and temporary files
 *.log

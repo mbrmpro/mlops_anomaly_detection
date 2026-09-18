@@ -1,0 +1,23 @@
+{
+  "category": "bottle",
+  "mlflow_run_id": "f99b6aafbb4348a6af3dcda0c03b8785",
+  "epochs_requested": 1,
+  "epochs_completed": 1,
+  "threshold": 0.31142324209213257,
+  "threshold_source": "labeled_calibration_split",
+  "calibration_fraction": 0.3,
+  "calibration_f1": 0.8292682926829268,
+  "holdout_metrics": {
+    "accuracy": 0.6779661016949152,
+    "balanced_accuracy": 0.4444444444444444,
+    "precision": 0.7407407407407407,
+    "recall": 0.8888888888888888,
+    "f1": 0.8080808080808081,
+    "auroc": 0.24920634920634924,
+    "tn": 0,
+    "fp": 14,
+    "fn": 5,
+    "tp": 40
+  },
+  "model_saved": false
+}
