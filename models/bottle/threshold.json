@@ -1,7 +1,7 @@
 {
     "category": "bottle",
-    "threshold": 0.12632791697978973,
+    "threshold": 0.09305831044912338,
     "threshold_source": "labeled_calibration_split",
     "calibration_fraction": 0.3,
-    "calibration_f1": 0.9230769230769231
+    "calibration_f1": 0.8717948717948718
 }
