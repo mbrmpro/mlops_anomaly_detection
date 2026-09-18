@@ -1,10 +1,12 @@
 services:
 
+
   postgres:
 
     image: postgres:16
 
     container_name: anomaly_postgres
+
 
     environment:
 
@@ -14,15 +16,61 @@ services:
 
       POSTGRES_PASSWORD: anomaly_password
 
+
     ports:
 
       - "5432:5432"
+
 
     volumes:
 
       - postgres_data:/var/lib/postgresql/data
 
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+
+    healthcheck:
+
+      test: ["CMD-SHELL", "pg_isready -U anomaly_user -d anomaly_db"]
+
+      interval: 5s
+
+      timeout: 5s
+
+      retries: 5
+
+
+
+  api:
+
+    image: anomaly-api:dev
+
+    container_name: anomaly_api
+
+
+    ports:
+
+      - "8000:8000"
+
+    environment: 
+      DATABASE_URL: ${DATABASE_URL} 
+      POSTGRES_HOST: postgres 
+      POSTGRES_PORT: 5432 
+      POSTGRES_DB: ${POSTGRES_DB} 
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data:ro
+
+
+    depends_on:
+
+      postgres:
+
+        condition: service_healthy
+
 
 
 volumes:
