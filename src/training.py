@@ -1,7 +1,13 @@
 """Train and evaluate category-specific convolutional autoencoders.
 
-The structure follows the exploratory CAE notebook, while data paths and
-labels are read from PostgreSQL for the MLOps application.
+Training data arrive incrementally through three batches.
+
+Only released batches are used for training:
+- Batch 1
+- Batch 1 + Batch 2
+- Batch 1 + Batch 2 + Batch 3
+
+The test dataset is fixed and does not change between training runs.
 """
 
 from __future__ import annotations
@@ -15,9 +21,12 @@ import json
 import os
 from pathlib import Path
 
+import mlflow
+import mlflow.tensorflow
 import numpy as np
 import psycopg2
 import tensorflow as tf
+
 from sklearn.metrics import (
     accuracy_score,
     balanced_accuracy_score,
@@ -30,11 +39,6 @@ from sklearn.metrics import (
 from sklearn.model_selection import train_test_split
 from tensorflow.keras import layers, models
 
-import mlflow
-import mlflow.tensorflow
-
-from mlflow.models import ModelSignature
-from mlflow.types.schema import Schema, TensorSpec
 
 # ==========================================================
 # CONFIG
@@ -44,14 +48,14 @@ IMG_SIZE = 128
 BATCH_SIZE = 16
 EPOCHS = 30
 VAL_SIZE = 0.20
-CALIBRATION_SIZE = 0.30
 RANDOM_STATE = 42
 PROJECT_CATEGORIES = ("bottle", "wood", "pill")
 LEARNING_RATE = 1e-3
+THRESHOLD_PERCENTILE = 95.0
 
 MLFLOW_TRACKING_URI = os.getenv(
     "MLFLOW_TRACKING_URI",
-    "sqlite:///mlflow.db",
+    "http://127.0.0.1:5001",
 )
 
 MLFLOW_EXPERIMENT_NAME = os.getenv(
@@ -59,10 +63,10 @@ MLFLOW_EXPERIMENT_NAME = os.getenv(
     "anomaly-detection-cae",
 )
 
+
 # ==========================================================
 # MLFLOW CONFIGURATION
 # ==========================================================
-
 
 def configure_mlflow():
     """Configure MLflow experiment tracking."""
@@ -71,17 +75,17 @@ def configure_mlflow():
     mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
 
     mlflow.tensorflow.autolog(
-        log_models=False,
-        log_datasets=False,
-        log_every_epoch=True,
-        checkpoint=False,
+        # log_models=False,
+        # log_datasets=False,
+        # log_every_epoch=True,
+        # checkpoint=False,
+        disable = True
     )
 
 
 # ==========================================================
 # POSTGRESQL CONNECTION AND QUERIES
 # ==========================================================
-
 
 def get_connection():
     return psycopg2.connect(
@@ -99,13 +103,32 @@ def get_categories():
             cursor.execute("""
                 SELECT DISTINCT category
                 FROM images
-                WHERE split = 'train' AND is_anomaly = FALSE
+                WHERE split = 'train'
                 ORDER BY category;
-                """)
+            """)
             return [row[0] for row in cursor.fetchall()]
 
 
+def get_available_batches(category):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT DISTINCT batch_id
+                FROM images
+                WHERE category = %s
+                  AND split = 'train'
+                  AND is_available = TRUE
+                ORDER BY batch_id;
+                """,
+                (category,),
+            )
+            return [int(row[0]) for row in cursor.fetchall()]
+
+
 def get_train_paths(category):
+    """Return all released training images."""
+
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -115,7 +138,8 @@ def get_train_paths(category):
                 WHERE category = %s
                   AND split = 'train'
                   AND is_anomaly = FALSE
-                ORDER BY image_path;
+                  AND is_available = TRUE
+                ORDER BY batch_id, image_path;
                 """,
                 (category,),
             )
@@ -123,13 +147,16 @@ def get_train_paths(category):
 
 
 def get_test_data(category):
+    """Return the fixed test dataset."""
+
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
                 SELECT image_path, is_anomaly
                 FROM images
-                WHERE category = %s AND split = 'test'
+                WHERE category = %s
+                  AND split = 'test'
                 ORDER BY image_path;
                 """,
                 (category,),
@@ -138,6 +165,7 @@ def get_test_data(category):
 
     paths = np.asarray([row[0] for row in rows])
     labels = np.asarray([int(row[1]) for row in rows], dtype=np.int32)
+
     return paths, labels
 
 
@@ -145,12 +173,16 @@ def get_test_data(category):
 # IMAGE LOADING
 # ==========================================================
 
-
 def decode_image(path):
     image = tf.io.read_file(path)
-    image = tf.image.decode_image(image, channels=3, expand_animations=False)
+    image = tf.image.decode_image(
+        image,
+        channels=3,
+        expand_animations=False,
+    )
     image = tf.image.resize(image, (IMG_SIZE, IMG_SIZE))
     image.set_shape((IMG_SIZE, IMG_SIZE, 3))
+
     return tf.cast(image, tf.float32) / 255.0
 
 
@@ -167,15 +199,19 @@ def image_parser(path):
 # DATASETS
 # ==========================================================
 
-
 def build_autoencoder_dataset(paths, shuffle=False):
     dataset = tf.data.Dataset.from_tensor_slices(paths)
+
     if shuffle:
         dataset = dataset.shuffle(
-            len(paths), seed=RANDOM_STATE, reshuffle_each_iteration=True
+            len(paths),
+            seed=RANDOM_STATE,
+            reshuffle_each_iteration=True,
         )
+
     return (
-        dataset.map(autoencoder_parser, num_parallel_calls=tf.data.AUTOTUNE)
+        dataset
+        .map(autoencoder_parser, num_parallel_calls=tf.data.AUTOTUNE)
         .batch(BATCH_SIZE)
         .prefetch(tf.data.AUTOTUNE)
     )
@@ -194,29 +230,28 @@ def build_image_dataset(paths):
 # CONVOLUTIONAL AUTOENCODER
 # ==========================================================
 
-
 def build_cae(img_size=IMG_SIZE):
     inputs = layers.Input(shape=(img_size, img_size, 3))
 
     x = layers.Conv2D(32, 3, padding="same")(inputs)
     x = layers.BatchNormalization()(x)
     x = layers.ReLU()(x)
-    x = layers.MaxPooling2D(2)(x)  # 128 -> 64
+    x = layers.MaxPooling2D(2)(x)
 
     x = layers.Conv2D(64, 3, padding="same")(x)
     x = layers.BatchNormalization()(x)
     x = layers.ReLU()(x)
-    x = layers.MaxPooling2D(2)(x)  # 64 -> 32
+    x = layers.MaxPooling2D(2)(x)
 
     x = layers.Conv2D(128, 3, padding="same")(x)
     x = layers.BatchNormalization()(x)
     x = layers.ReLU()(x)
-    x = layers.MaxPooling2D(2)(x)  # 32 -> 16
+    x = layers.MaxPooling2D(2)(x)
 
     x = layers.Conv2D(256, 3, padding="same")(x)
     x = layers.BatchNormalization()(x)
     x = layers.ReLU()(x)
-    encoded = layers.MaxPooling2D(2)(x)  # 16 -> 8
+    encoded = layers.MaxPooling2D(2)(x)
 
     x = layers.Conv2D(512, 3, padding="same")(encoded)
     x = layers.BatchNormalization()(x)
@@ -224,14 +259,18 @@ def build_cae(img_size=IMG_SIZE):
 
     x = layers.Conv2DTranspose(256, 3, strides=2, padding="same")(x)
     x = layers.ReLU()(x)
+
     x = layers.Conv2DTranspose(128, 3, strides=2, padding="same")(x)
     x = layers.ReLU()(x)
+
     x = layers.Conv2DTranspose(64, 3, strides=2, padding="same")(x)
     x = layers.ReLU()(x)
+
     x = layers.Conv2DTranspose(32, 3, strides=2, padding="same")(x)
     x = layers.ReLU()(x)
 
     outputs = layers.Conv2D(3, 3, activation="sigmoid", padding="same")(x)
+
     return models.Model(inputs, outputs, name="convolutional_autoencoder")
 
 
@@ -239,9 +278,10 @@ def build_cae(img_size=IMG_SIZE):
 # LOSS: MSE + SSIM
 # ==========================================================
 
-
 def ssim_loss(y_true, y_pred):
-    return 1.0 - tf.reduce_mean(tf.image.ssim(y_true, y_pred, max_val=1.0))
+    return 1.0 - tf.reduce_mean(
+        tf.image.ssim(y_true, y_pred, max_val=1.0)
+    )
 
 
 def hybrid_loss(y_true, y_pred):
@@ -253,23 +293,56 @@ def hybrid_loss(y_true, y_pred):
 # ANOMALY SCORES: MSE + L1 + (1 - SSIM) + BLUR DIFFERENCE
 # ==========================================================
 
-
 def blur(images):
-    return tf.nn.avg_pool(images, ksize=3, strides=1, padding="SAME")
+    return tf.nn.avg_pool(
+        images,
+        ksize=3,
+        strides=1,
+        padding="SAME",
+    )
 
 
 def compute_scores(model, dataset):
-    components = {"mse": [], "l1": [], "ssim": [], "blur": [], "hybrid": []}
+    components = {
+        "mse": [],
+        "l1": [],
+        "ssim": [],
+        "blur": [],
+        "hybrid": [],
+    }
 
     for batch in dataset:
         reconstruction = model(batch, training=False)
-        mse = tf.reduce_mean(tf.square(batch - reconstruction), axis=(1, 2, 3))
-        l1 = tf.reduce_mean(tf.abs(batch - reconstruction), axis=(1, 2, 3))
-        ssim = tf.image.ssim(batch, reconstruction, max_val=1.0)
-        blur_difference = tf.reduce_mean(
-            tf.abs(blur(batch) - blur(reconstruction)), axis=(1, 2, 3)
+
+        mse = tf.reduce_mean(
+            tf.square(batch - reconstruction),
+            axis=(1, 2, 3),
         )
-        hybrid = 0.4 * mse + 0.2 * l1 + 0.2 * (1.0 - ssim) + 0.2 * blur_difference
+
+        l1 = tf.reduce_mean(
+            tf.abs(batch - reconstruction),
+            axis=(1, 2, 3),
+        )
+
+        ssim = tf.image.ssim(
+            batch,
+            reconstruction,
+            max_val=1.0,
+        )
+
+        blur_difference = tf.reduce_mean(
+            tf.abs(
+                blur(batch) - blur(reconstruction)
+            ),
+            axis=(1, 2, 3),
+        )
+
+        hybrid = (
+            0.4 * mse
+            + 0.2 * l1
+            + 0.2 * (1.0 - ssim)
+            + 0.2 * blur_difference
+        )
 
         components["mse"].extend(mse.numpy())
         components["l1"].extend(l1.numpy())
@@ -284,38 +357,67 @@ def compute_scores(model, dataset):
 
 
 # ==========================================================
-# THRESHOLD OPTIMIZER
+# THRESHOLD
 # ==========================================================
 
+def calculate_threshold(scores):
+    """Calculate threshold from released normal training data."""
 
-def find_best_threshold(labels, scores):
-    """Optimize F1 on calibration data, never on final holdout data."""
-    best_threshold = float(scores[0])
-    best_f1 = -1.0
-    for threshold in np.unique(scores):
-        predictions = (scores > threshold).astype(int)
-        score = f1_score(labels, predictions, zero_division=0)
-        if score > best_f1:
-            best_f1 = score
-            best_threshold = float(threshold)
-    return best_threshold, float(best_f1)
+    return float(
+        np.percentile(
+            scores,
+            THRESHOLD_PERCENTILE,
+        )
+    )
 
 
 # ==========================================================
 # FINAL EVALUATION
 # ==========================================================
 
-
 def evaluate(labels, scores, threshold):
     predictions = (scores > threshold).astype(int)
-    tn, fp, fn, tp = confusion_matrix(labels, predictions, labels=[0, 1]).ravel()
+
+    tn, fp, fn, tp = confusion_matrix(
+        labels,
+        predictions,
+        labels=[0, 1],
+    ).ravel()
+
     return {
-        "accuracy": float(accuracy_score(labels, predictions)),
-        "balanced_accuracy": float(balanced_accuracy_score(labels, predictions)),
-        "precision": float(precision_score(labels, predictions, zero_division=0)),
-        "recall": float(recall_score(labels, predictions, zero_division=0)),
-        "f1": float(f1_score(labels, predictions, zero_division=0)),
-        "auroc": float(roc_auc_score(labels, scores)),
+        "accuracy": float(
+            accuracy_score(labels, predictions)
+        ),
+        "balanced_accuracy": float(
+            balanced_accuracy_score(labels, predictions)
+        ),
+        "precision": float(
+            precision_score(
+                labels,
+                predictions,
+                zero_division=0,
+            )
+        ),
+        "recall": float(
+            recall_score(
+                labels,
+                predictions,
+                zero_division=0,
+            )
+        ),
+        "f1": float(
+            f1_score(
+                labels,
+                predictions,
+                zero_division=0,
+            )
+        ),
+        "auroc": float(
+            roc_auc_score(
+                labels,
+                scores,
+            )
+        ),
         "tn": int(tn),
         "fp": int(fp),
         "fn": int(fn),
@@ -327,39 +429,75 @@ def evaluate(labels, scores, threshold):
 # TRAIN ONE CATEGORY
 # ==========================================================
 
-
 def _train_category(category, epochs=EPOCHS, save_model=True):
     print(f"\n========== TRAINING: {category} ==========")
+
     tf.keras.backend.clear_session()
     tf.keras.utils.set_random_seed(RANDOM_STATE)
 
-    all_train_paths = np.asarray(get_train_paths(category))
-    all_test_paths, all_test_labels = get_test_data(category)
+    # ------------------------------------------------------
+    # GET CURRENT AVAILABLE BATCHES
+    # ------------------------------------------------------
+
+    available_batches = get_available_batches(category)
+
+    if not available_batches:
+        raise ValueError(
+            f"No training batch has been released "
+            f"for category '{category}'"
+        )
+
+    all_train_paths = np.asarray(
+        get_train_paths(category)
+    )
+
+    test_paths, test_labels = get_test_data(category)
 
     if len(all_train_paths) < 2:
-        raise ValueError(f"Not enough training images for category '{category}'")
-    if len(all_test_paths) < 4 or len(np.unique(all_test_labels)) < 2:
-        raise ValueError(f"Insufficient labeled test data for category '{category}'")
+        raise ValueError(
+            f"Not enough available training images "
+            f"for category '{category}'"
+        )
+
+    if len(test_paths) < 2:
+        raise ValueError(
+            f"Not enough test images "
+            f"for category '{category}'"
+        )
+
+    if len(np.unique(test_labels)) < 2:
+        raise ValueError(
+            f"Test dataset for '{category}' "
+            f"must contain normal and anomalous images"
+        )
+
+    # ------------------------------------------------------
+    # TRAIN / VALIDATION SPLIT
+    # ------------------------------------------------------
 
     train_paths, validation_paths = train_test_split(
         all_train_paths,
         test_size=VAL_SIZE,
         random_state=RANDOM_STATE,
     )
-    calibration_paths, holdout_paths, calibration_labels, holdout_labels = (
-        train_test_split(
-            all_test_paths,
-            all_test_labels,
-            train_size=CALIBRATION_SIZE,
-            random_state=RANDOM_STATE,
-            stratify=all_test_labels,
-        )
+
+    print(
+        f"Available batches: {available_batches}"
     )
 
     print(
-        f"Train: {len(train_paths)} | Validation: {len(validation_paths)} | "
-        f"Calibration: {len(calibration_paths)} | Holdout: {len(holdout_paths)}"
+        f"Available training images: {len(all_train_paths)}"
     )
+
+    print(
+        f"Train: {len(train_paths)} | "
+        f"Validation: {len(validation_paths)} | "
+        f"Fixed test: {len(test_paths)}"
+    )
+
+    # ------------------------------------------------------
+    # MLFLOW PARAMETERS
+    # ------------------------------------------------------
 
     mlflow.log_params(
         {
@@ -370,33 +508,67 @@ def _train_category(category, epochs=EPOCHS, save_model=True):
             "epochs_requested": epochs,
             "learning_rate": LEARNING_RATE,
             "validation_fraction": VAL_SIZE,
-            "calibration_fraction": CALIBRATION_SIZE,
             "random_state": RANDOM_STATE,
+            "available_batches": ",".join(
+                str(batch)
+                for batch in available_batches
+            ),
+            "latest_batch": max(available_batches),
+            "available_training_images": len(all_train_paths),
             "train_images": len(train_paths),
             "validation_images": len(validation_paths),
-            "calibration_images": len(calibration_paths),
-            "holdout_images": len(holdout_paths),
+            "test_images": len(test_paths),
+            "threshold_percentile": THRESHOLD_PERCENTILE,
         }
     )
 
-    train_dataset = build_autoencoder_dataset(train_paths, shuffle=True)
-    validation_dataset = build_autoencoder_dataset(validation_paths)
-    calibration_dataset = build_image_dataset(calibration_paths)
-    holdout_dataset = build_image_dataset(holdout_paths)
+    # ------------------------------------------------------
+    # DATASETS
+    # ------------------------------------------------------
+
+    train_dataset = build_autoencoder_dataset(
+        train_paths,
+        shuffle=True,
+    )
+
+    validation_dataset = build_autoencoder_dataset(
+        validation_paths
+    )
+
+    threshold_dataset = build_image_dataset(
+        all_train_paths
+    )
+
+    test_dataset = build_image_dataset(
+        test_paths
+    )
+
+    # ------------------------------------------------------
+    # MODEL
+    # ------------------------------------------------------
 
     model = build_cae(IMG_SIZE)
+
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE),
+        optimizer=tf.keras.optimizers.Adam(
+            learning_rate=LEARNING_RATE
+        ),
         loss=hybrid_loss,
     )
+
     callbacks = [
-        # tf.keras.callbacks.EarlyStopping(
-        #     monitor="val_loss", patience=8, restore_best_weights=True
-        # ),
         tf.keras.callbacks.ReduceLROnPlateau(
-            monitor="val_loss", factor=0.5, patience=4, min_lr=1e-6
+            monitor="val_loss",
+            factor=0.5,
+            patience=4,
+            min_lr=1e-6,
         ),
     ]
+
+    # ------------------------------------------------------
+    # TRAIN
+    # ------------------------------------------------------
+
     history = model.fit(
         train_dataset,
         validation_data=validation_dataset,
@@ -404,60 +576,118 @@ def _train_category(category, epochs=EPOCHS, save_model=True):
         callbacks=callbacks,
     )
 
-    print("\nOptimizing threshold on calibration data...")
-    calibration_scores = compute_scores(model, calibration_dataset)
-    threshold, calibration_f1 = find_best_threshold(
-        calibration_labels, calibration_scores["hybrid"]
+    for epoch in range(len(history.history["loss"])):
+        mlflow.log_metric(
+            "train_loss",
+            history.history["loss"][epoch],
+            step=epoch,
+        )
+
+        mlflow.log_metric(
+            "val_loss",
+            history.history["val_loss"][epoch],
+            step=epoch,
+        )
+    # ------------------------------------------------------
+    # THRESHOLD FROM RELEASED NORMAL TRAINING DATA
+    # ------------------------------------------------------
+
+    print(
+        "\nCalculating threshold from "
+        "released normal training data..."
     )
 
-    print("Evaluating once on untouched holdout data...")
-    holdout_scores = compute_scores(model, holdout_dataset)
-    metrics = evaluate(holdout_labels, holdout_scores["hybrid"], threshold)
+    training_scores = compute_scores(
+        model,
+        threshold_dataset,
+    )
+
+    threshold = calculate_threshold(
+        training_scores["hybrid"]
+    )
+
+    # ------------------------------------------------------
+    # FIXED TEST EVALUATION
+    # ------------------------------------------------------
+
+    print(
+        "Evaluating on fixed test dataset..."
+    )
+
+    test_scores = compute_scores(
+        model,
+        test_dataset,
+    )
+
+    metrics = evaluate(
+        test_labels,
+        test_scores["hybrid"],
+        threshold,
+    )
 
     print("\n========== FINAL EVALUATION ==========")
+    print(f"Available batches: {available_batches}")
     print(f"Threshold:         {threshold:.6f}")
-    print(f"Calibration F1:    {calibration_f1:.4f}")
-    print(f"Holdout accuracy:  {metrics['accuracy']:.4f}")
+    print(f"Accuracy:          {metrics['accuracy']:.4f}")
     print(f"Balanced accuracy: {metrics['balanced_accuracy']:.4f}")
     print(f"Precision:         {metrics['precision']:.4f}")
     print(f"Recall:            {metrics['recall']:.4f}")
     print(f"F1:                {metrics['f1']:.4f}")
     print(f"AUROC:             {metrics['auroc']:.4f}")
     print(
-        f"TN={metrics['tn']} FP={metrics['fp']} "
-        f"FN={metrics['fn']} TP={metrics['tp']}"
+        f"TN={metrics['tn']} "
+        f"FP={metrics['fp']} "
+        f"FN={metrics['fn']} "
+        f"TP={metrics['tp']}"
     )
 
+    # ------------------------------------------------------
+    # RESULT
+    # ------------------------------------------------------
+
     model_dir = Path("models") / category
+
     result = {
         "category": category,
         "mlflow_run_id": mlflow.active_run().info.run_id,
+        "available_batches": available_batches,
+        "latest_batch": max(available_batches),
+        "training_images": int(len(all_train_paths)),
+        "train_images": int(len(train_paths)),
+        "validation_images": int(len(validation_paths)),
+        "test_images": int(len(test_paths)),
         "epochs_requested": int(epochs),
-        "epochs_completed": int(len(history.history["loss"])),
+        "epochs_completed": int(
+            len(history.history["loss"])
+        ),
         "threshold": float(threshold),
-        "threshold_source": "labeled_calibration_split",
-        "calibration_fraction": CALIBRATION_SIZE,
-        "calibration_f1": calibration_f1,
-        "holdout_metrics": metrics,
+        "threshold_source": "released_normal_training_percentile",
+        "threshold_percentile": THRESHOLD_PERCENTILE,
+        "test_metrics": metrics,
         "model_saved": bool(save_model),
     }
+
+    # ------------------------------------------------------
+    # MLFLOW METRICS
+    # ------------------------------------------------------
 
     mlflow.log_metrics(
         {
             "epochs_completed": result["epochs_completed"],
-            "best_validation_loss": float(min(history.history["val_loss"])),
+            "best_validation_loss": float(
+                min(history.history["val_loss"])
+            ),
             "anomaly_threshold": float(threshold),
-            "calibration_f1": float(calibration_f1),
-            "holdout_accuracy": metrics["accuracy"],
-            "holdout_balanced_accuracy": metrics["balanced_accuracy"],
-            "holdout_precision": metrics["precision"],
-            "holdout_recall": metrics["recall"],
-            "holdout_f1": metrics["f1"],
-            "holdout_auroc": metrics["auroc"],
-            "holdout_tn": metrics["tn"],
-            "holdout_fp": metrics["fp"],
-            "holdout_fn": metrics["fn"],
-            "holdout_tp": metrics["tp"],
+            "test_accuracy": metrics["accuracy"],
+            "test_balanced_accuracy": metrics["balanced_accuracy"],
+            "test_precision": metrics["precision"],
+            "test_recall": metrics["recall"],
+            "test_f1": metrics["f1"],
+            "test_auroc": metrics["auroc"],
+            "test_tn": metrics["tn"],
+            "test_fp": metrics["fp"],
+            "test_fn": metrics["fn"],
+            "test_tp": metrics["tp"],
         }
     )
 
@@ -469,56 +699,113 @@ def _train_category(category, epochs=EPOCHS, save_model=True):
     mlflow.log_dict(
         {
             "category": category,
+            "available_batches": available_batches,
+            "latest_batch": max(available_batches),
             "threshold": float(threshold),
-            "threshold_source": "labeled_calibration_split",
-            "calibration_fraction": CALIBRATION_SIZE,
-            "calibration_f1": float(calibration_f1),
+            "threshold_source": "released_normal_training_percentile",
+            "threshold_percentile": THRESHOLD_PERCENTILE,
         },
         "reports/threshold.json",
     )
 
+    # ------------------------------------------------------
+    # SAVE MODEL
+    # ------------------------------------------------------
+
     if save_model:
-        model_dir.mkdir(parents=True, exist_ok=True)
+        model_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
         model_path = model_dir / "cae.keras"
         threshold_path = model_dir / "threshold.json"
         evaluation_path = model_dir / "evaluation.json"
+
         model.save(model_path)
+
         threshold_path.write_text(
             json.dumps(
                 {
                     "category": category,
+                    "available_batches": available_batches,
+                    "latest_batch": max(available_batches),
                     "threshold": float(threshold),
-                    "threshold_source": "labeled_calibration_split",
-                    "calibration_fraction": CALIBRATION_SIZE,
-                    "calibration_f1": calibration_f1,
+                    "threshold_source": "released_normal_training_percentile",
+                    "threshold_percentile": THRESHOLD_PERCENTILE,
                 },
                 indent=4,
             )
         )
-        evaluation_path.write_text(json.dumps(result, indent=4))
-        print(f"Model:             {model_path}")
-        print(f"Threshold:         {threshold_path}")
-        print(f"Evaluation:        {evaluation_path}")
+
+        evaluation_path.write_text(
+            json.dumps(
+                result,
+                indent=4,
+            )
+        )
+
+        mlflow.log_artifact(
+            str(model_path),
+            artifact_path="model",
+        )
+
+        print(f"Model:      {model_path}")
+        print(f"Threshold:  {threshold_path}")
+        print(f"Evaluation: {evaluation_path}")
 
     return result
 
+
+# ==========================================================
+# TRAIN
+# ==========================================================
 
 def train(category, epochs=EPOCHS, save_model=True):
     """Train one category inside a dedicated MLflow run."""
 
     configure_mlflow()
 
-    with mlflow.start_run(run_name=f"cae-{category}") as run:
+    if category not in PROJECT_CATEGORIES:
+        raise ValueError(
+            f"Unsupported category: {category}"
+        )
+
+    available_batches = get_available_batches(
+        category
+    )
+
+    if not available_batches:
+        raise ValueError(
+            f"No training batch is currently "
+            f"available for '{category}'"
+        )
+
+    latest_batch = max(
+        available_batches
+    )
+
+    run_name = (
+        f"cae-{category}-batch-{latest_batch}"
+    )
+
+    with mlflow.start_run(
+        run_name=run_name
+    ) as run:
+
         mlflow.set_tags(
             {
                 "category": category,
                 "pipeline_stage": "training",
                 "model_family": "CAE",
                 "candidate_status": "candidate",
+                "latest_batch": str(latest_batch),
             }
         )
 
-        print(f"MLflow run: {run.info.run_id}")
+        print(
+            f"MLflow run: {run.info.run_id}"
+        )
 
         return _train_category(
             category=category,
@@ -531,41 +818,86 @@ def train(category, epochs=EPOCHS, save_model=True):
 # MAIN
 # ==========================================================
 
-
 def main():
     parser = argparse.ArgumentParser()
+
     parser.add_argument(
         "categories",
         nargs="*",
         default=list(PROJECT_CATEGORIES),
         help="Categories to train. Defaults to bottle wood pill.",
     )
-    parser.add_argument("--epochs", type=int, default=EPOCHS)
+
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=EPOCHS,
+    )
+
     parser.add_argument(
         "--no-save",
         action="store_true",
         help="Train without replacing saved model artifacts.",
     )
+
     args = parser.parse_args()
 
-    categories = args.categories or list(PROJECT_CATEGORIES)
-    available_categories = set(get_categories())
-    missing = [
-        category for category in categories if category not in available_categories
-    ]
-    if missing:
-        raise ValueError("Missing categories in PostgreSQL: " + ", ".join(missing))
+    categories = (
+        args.categories
+        or list(PROJECT_CATEGORIES)
+    )
 
-    print("Categories:", ", ".join(categories))
+    available_categories = set(
+        get_categories()
+    )
+
+    missing = [
+        category
+        for category in categories
+        if category not in available_categories
+    ]
+
+    if missing:
+        raise ValueError(
+            "Missing categories in PostgreSQL: "
+            + ", ".join(missing)
+        )
+
+    print(
+        "Categories: "
+        + ", ".join(categories)
+    )
+
     results = [
-        train(category, epochs=args.epochs, save_model=not args.no_save)
+        train(
+            category,
+            epochs=args.epochs,
+            save_model=not args.no_save,
+        )
         for category in categories
     ]
 
     if not args.no_save:
-        summary_path = Path("models") / "training_summary.json"
-        summary_path.write_text(json.dumps(results, indent=4))
-        print(f"Training summary:  {summary_path}")
+        summary_path = (
+            Path("models")
+            / "training_summary.json"
+        )
+
+        summary_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        summary_path.write_text(
+            json.dumps(
+                results,
+                indent=4,
+            )
+        )
+
+        print(
+            f"Training summary: {summary_path}"
+        )
 
 
 if __name__ == "__main__":
