@@ -1,267 +1,807 @@
 # Industrial Image Anomaly Detection — MLOps
 
-This project implements an MLOps pipeline for detecting visual anomalies in
-industrial images from the MVTec Anomaly Detection dataset.
+This project implements an MLOps pipeline for industrial image anomaly detection using the MVTec AD dataset.
 
-A convolutional autoencoder reconstructs each input image. The difference
-between the original image and its reconstruction is used to calculate an
-anomaly score.
+The project currently supports three categories:
 
-## Supported categories
+* Bottle
+* Wood
+* Pill
 
-The current project focuses on:
+A convolutional autoencoder is trained on normal images.
+The reconstruction error is used to calculate an anomaly score.
 
-- Bottle
-- Wood
-- Pill
-
-Each category has its own trained model and anomaly threshold.
-
-## Project status
-
-### Phase 1 — Foundations
-
-- [x] Define the anomaly-detection objective
-- [x] Load MVTec image metadata into PostgreSQL
-- [x] Implement the convolutional autoencoder
-- [x] Create category-specific training
-- [x] Create prediction logic
-- [x] Save models and thresholds
-- [x] Implement FastAPI endpoints
-- [x] Add model evaluation
-
-### Phase 2 — Tracking and versioning
-
-- [x] Add MLflow experiment tracking
-- [x] Log training parameters
-- [x] Log training and validation losses
-- [x] Log holdout evaluation metrics
-- [x] Log thresholds and evaluation reports
-- [x] Log Keras models in MLflow
-- [ ] Add MLflow Model Registry
-- [ ] Compare candidate and champion models
-- [ ] Add dataset versioning with DVC
-- [ ] Split the application into Docker microservices
-- [ ] Add scheduled training
+---
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    A[MVTec dataset] --> B[PostgreSQL metadata]
-    B --> C[Training pipeline]
-    C --> D[MLflow Tracking]
-    C --> E[Category CAE model]
-    E --> F[FastAPI prediction]
-    F --> G[Anomaly result]
+The project uses:
+
+* **PostgreSQL** — stores image metadata and training batch status
+* **FastAPI** — exposes training, prediction and batch-management endpoints
+* **Airflow** — orchestrates automatic data arrival and model training
+* **TensorFlow** — trains the convolutional autoencoder
+* **MLflow** — tracks experiments, parameters, metrics and model artifacts
+* **Docker Compose** — starts and connects all services
+
+Basic workflow:
+
+```text
+Airflow
+   |
+   | HTTP
+   v
+FastAPI
+   |
+   +----------> PostgreSQL
+   |
+   v
+training.py
+   |
+   +----------> TensorFlow
+   |
+   +----------> MLflow
 ```
 
-## Project structure
+---
+
+# Project Structure
 
 ```text
 mlops_anomaly_detection/
+├── airflow/
+│   └── dags/
+│       └── training_dag.py
 ├── api/
 │   └── main.py
 ├── database/
 │   ├── init.sql
 │   └── load_data.py
+├── data/
+├── models/
 ├── src/
 │   ├── training.py
 │   ├── predict.py
 │   └── evaluate.py
-├── models/
-│   ├── bottle/
-│   ├── wood/
-│   └── pill/
 ├── docker-compose.yml
+├── Dockerfile
 ├── requirements.txt
 └── README.md
 ```
 
-The dataset, trained models and local MLflow storage are excluded from Git.
+---
 
-## Installation
+# Start the Project
 
-Clone the repository:
-
-```bash
-git clone git@github.com:mbrmpro/mlops_anomaly_detection.git
-cd mlops_anomaly_detection
-```
-
-Create and activate a virtual environment:
+Go to the project directory:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+cd ~/jupyter/Anomaly_detection_project/MLops_Project/mlops_anomaly_detection
 ```
 
-Install the dependencies:
+Start all Docker services:
 
 ```bash
-pip install -r requirements.txt
+docker compose up -d
 ```
 
-## Dataset
+Check the containers:
 
-The expected dataset structure is:
+```bash
+docker compose ps
+```
+
+The main containers are:
 
 ```text
-data/
-├── bottle/
-│   ├── train/
-│   └── test/
-├── wood/
-│   ├── train/
-│   └── test/
-└── pill/
-    ├── train/
-    └── test/
+anomaly_postgres
+anomaly_mlflow
+anomaly_api
+anomaly_airflow
 ```
 
-Load the image metadata into PostgreSQL:
+---
+
+# Stop the Project
+
+Stop all containers:
 
 ```bash
-python database/load_data.py
+docker compose down
 ```
 
-## Model training
-
-Train one category:
+Do not use:
 
 ```bash
-python src/training.py bottle --epochs 30
+docker compose down -v
 ```
 
-Train all project categories:
+unless you intentionally want to delete Docker volumes.
+
+---
+
+# Application URLs
+
+## FastAPI
+
+```text
+http://localhost:8000/docs
+```
+
+## Airflow
+
+```text
+http://localhost:8081
+```
+
+## MLflow
+
+```text
+http://localhost:5001
+```
+
+## PostgreSQL
+
+```text
+localhost:5432
+```
+
+---
+
+# Check the Services
+
+## FastAPI
 
 ```bash
-python src/training.py bottle wood pill --epochs 30
+curl http://localhost:8000/health/db
 ```
 
-Run a smoke test without replacing the locally saved model:
+Expected:
+
+```json
+{
+  "status": "ok",
+  "database": "connected"
+}
+```
+
+## MLflow
+
+```bash
+curl http://localhost:5001/health
+```
+
+Expected:
+
+```text
+OK
+```
+
+## Airflow
+
+```bash
+curl http://localhost:8081/health
+```
+
+The response should show healthy Airflow components.
+
+---
+
+# Airflow Login
+
+List existing users:
+
+```bash
+docker compose exec airflow airflow users list
+```
+
+For a local demo, the admin password can be reset with:
+
+```bash
+docker compose exec airflow \
+airflow users reset-password \
+--username admin \
+--password admin
+```
+
+Then log in with:
+
+```text
+Username: admin
+Password: admin
+```
+
+---
+
+# Dataset Preparation
+
+The project uses:
+
+```text
+bottle
+wood
+pill
+```
+
+The data is divided into:
+
+```text
+train/
+├── batch_1/
+├── batch_2/
+└── batch_3/
+
+test/
+├── good/
+└── anomaly types...
+```
+
+The training batches simulate new data arriving over time.
+
+The test set stays fixed.
+
+---
+
+# PostgreSQL Training Batches
+
+Training images contain an `is_available` field.
+
+Initially:
+
+```text
+Batch 1 → FALSE
+Batch 2 → FALSE
+Batch 3 → FALSE
+```
+
+This means the training data has not arrived yet.
+
+Airflow changes the batches to available one by one.
+
+---
+
+# Reset the Training Batches
+
+Before a demo, reset all training batches:
+
+```bash
+docker compose exec postgres \
+psql -U anomaly_user -d anomaly_db \
+-c "
+UPDATE images
+SET
+    is_available = FALSE,
+    released_at = NULL
+WHERE split = 'train';
+"
+```
+
+Check the batch status:
+
+```bash
+docker compose exec postgres \
+psql -U anomaly_user -d anomaly_db \
+-c "
+SELECT
+    category,
+    batch_id,
+    is_available,
+    COUNT(*)
+FROM images
+WHERE split = 'train'
+GROUP BY category, batch_id, is_available
+ORDER BY category, batch_id;
+"
+```
+
+Initial expected state:
+
+```text
+bottle | 1 | f | 61
+bottle | 2 | f | 61
+bottle | 3 | f | 61
+
+pill   | 1 | f | 78
+pill   | 2 | f | 78
+pill   | 3 | f | 78
+
+wood   | 1 | f | 71
+wood   | 2 | f | 71
+wood   | 3 | f | 71
+```
+
+`f` means `FALSE`.
+
+`t` means `TRUE`.
+
+---
+
+# Airflow Workflow
+
+The Airflow DAG is:
+
+```text
+anomaly_detection_incremental_training
+```
+
+The tasks run in this order:
+
+```text
+release_next_batch
+        |
+        v
+train_bottle
+        |
+        v
+train_wood
+        |
+        v
+train_pill
+```
+
+Airflow communicates with FastAPI through HTTP requests.
+
+For example:
+
+```text
+Airflow
+   |
+   | POST /batches/release-next
+   v
+FastAPI
+```
+
+FastAPI then updates PostgreSQL.
+
+For training:
+
+```text
+Airflow
+   |
+   | POST /training
+   v
+FastAPI
+   |
+   v
+training.py
+```
+
+---
+
+# First Airflow Run
+
+Trigger the DAG once from the Airflow interface.
+
+Airflow releases:
+
+```text
+Batch 1
+```
+
+The database becomes:
+
+```text
+Batch 1 → TRUE
+Batch 2 → FALSE
+Batch 3 → FALSE
+```
+
+Training uses:
+
+```text
+Bottle → 61 images
+Wood   → 71 images
+Pill   → 78 images
+```
+
+The three models are trained one after another.
+
+---
+
+# Second Airflow Run
+
+Trigger the DAG again.
+
+Airflow releases:
+
+```text
+Batch 2
+```
+
+Training becomes cumulative:
+
+```text
+Bottle → 61 + 61 = 122 images
+Wood   → 71 + 71 = 142 images
+Pill   → 78 + 78 = 156 images
+```
+
+The models are retrained using:
+
+```text
+Batch 1 + Batch 2
+```
+
+---
+
+# Third Airflow Run
+
+Trigger the DAG again.
+
+Airflow releases:
+
+```text
+Batch 3
+```
+
+Training now uses:
+
+```text
+Bottle → 183 images
+Wood   → 213 images
+Pill   → 234 images
+```
+
+The models are trained using:
+
+```text
+Batch 1 + Batch 2 + Batch 3
+```
+
+---
+
+# Fourth Airflow Run
+
+After all three batches are available, there is no new data.
+
+Airflow skips the training workflow.
+
+This prevents unnecessary retraining.
+
+---
+
+# Model Training
+
+The actual machine-learning training happens in:
+
+```text
+src/training.py
+```
+
+The training pipeline:
+
+```text
+Read available training images
+        |
+        v
+Create train / validation split
+        |
+        v
+Train TensorFlow autoencoder
+        |
+        v
+Calculate anomaly threshold
+        |
+        v
+Evaluate on fixed test set
+        |
+        v
+Log results to MLflow
+```
+
+---
+
+# MLflow
+
+MLflow runs inside Docker.
+
+Inside the Docker network:
+
+```text
+http://mlflow:5000
+```
+
+From the browser:
+
+```text
+http://localhost:5001
+```
+
+Each training run logs information such as:
+
+```text
+category
+available batches
+latest batch
+number of training images
+epochs
+threshold
+accuracy
+precision
+recall
+F1
+AUROC
+confusion matrix
+```
+
+It also stores:
+
+```text
+evaluation.json
+threshold.json
+model artifacts
+```
+
+Example MLflow runs:
+
+```text
+cae-bottle-batch-1
+cae-wood-batch-1
+cae-pill-batch-1
+
+cae-bottle-batch-2
+cae-wood-batch-2
+cae-pill-batch-2
+
+cae-bottle-batch-3
+cae-wood-batch-3
+cae-pill-batch-3
+```
+
+---
+
+# Clean MLflow Before a Demo
+
+Stop the containers:
+
+```bash
+docker compose down
+```
+
+Remove the Dockerized MLflow history:
+
+```bash
+sudo rm -rf mlflow_data
+mkdir -p mlflow_data
+```
+
+Start the project again:
+
+```bash
+docker compose up -d
+```
+
+Check MLflow:
+
+```bash
+curl http://localhost:5001/health
+```
+
+---
+
+# Manual Training
+
+Training can also be executed without Airflow.
+
+Example:
+
+```bash
+python src/training.py bottle --epochs 1
+```
+
+For a quick test without replacing the saved model:
 
 ```bash
 python src/training.py bottle --epochs 1 --no-save
 ```
 
-## MLflow experiment tracking
+Airflow is preferred for the complete automated workflow.
 
-The training pipeline creates one MLflow run per category in the experiment:
+---
 
-```text
-anomaly-detection-cae
-```
+# FastAPI
 
-Each run records:
+FastAPI provides the interface between Airflow and the ML pipeline.
 
-- Category and model type
-- Image size and batch size
-- Learning rate and requested epochs
-- Training, validation, calibration and holdout image counts
-- Training and validation loss per epoch
-- Calibration F1 score
-- Holdout F1 and AUROC
-- Accuracy, balanced accuracy, precision and recall
-- Confusion-matrix values
-- Selected anomaly threshold
-- Evaluation and threshold JSON reports
-- Trained Keras model and tensor signature
-
-Start the MLflow interface:
-
-```bash
-mlflow ui \
-  --backend-store-uri "sqlite:///$PWD/mlflow.db" \
-  --host 127.0.0.1 \
-  --port 5001
-```
-
-Open:
+Main endpoints:
 
 ```text
-http://127.0.0.1:5001
-```
+GET  /
+GET  /health/db
 
-## Current bottle candidate
+GET  /batches/status
 
-The latest tracked bottle candidate produced approximately:
+POST /batches/release-next
 
-| Metric | Value |
-|---|---:|
-| Holdout F1 | 0.8654 |
-| Holdout AUROC | 0.6651 |
+POST /training
 
-This model is still considered a candidate. It has not yet been promoted
-through the MLflow Model Registry.
-
-## API
-
-Start the FastAPI application:
-
-```bash
-uvicorn api.main:app --host 127.0.0.1 --port 8000
+POST /predict
 ```
 
 Interactive documentation:
 
 ```text
-http://127.0.0.1:8000/docs
+http://localhost:8000/docs
 ```
 
-Main endpoints:
+---
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| `POST` | `/training` | Train a category-specific model |
-| `POST` | `/predict` | Predict whether an image is anomalous |
-| `POST` | `/evaluate` | Evaluate a saved category model |
+# Docker Communication
 
-## Prediction example
+Docker Compose gives each service a hostname.
+
+Inside Docker:
+
+```text
+Airflow → http://api:8000
+
+FastAPI → postgres:5432
+
+FastAPI / training.py → http://mlflow:5000
+```
+
+From the local computer:
+
+```text
+FastAPI → localhost:8000
+
+Airflow → localhost:8081
+
+MLflow → localhost:5001
+
+PostgreSQL → localhost:5432
+```
+
+---
+
+# Complete MLOps Workflow
+
+```text
+1. Docker Compose starts the services
+        |
+        v
+2. Airflow starts the DAG
+        |
+        v
+3. Airflow requests a new batch
+        |
+        v
+4. FastAPI updates PostgreSQL
+        |
+        v
+5. New training data becomes available
+        |
+        v
+6. Airflow requests model training
+        |
+        v
+7. FastAPI calls training.py
+        |
+        v
+8. TensorFlow trains the autoencoder
+        |
+        v
+9. Model is evaluated on the fixed test set
+        |
+        v
+10. Metrics and artifacts are logged in MLflow
+        |
+        v
+11. Next Airflow run releases the next batch
+```
+
+---
+
+# Useful Docker Commands
+
+Show running containers:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "image_path": "data/bottle/test/good/018.png",
-    "category": "bottle"
-  }'
+docker compose ps
 ```
 
-Example response:
+Show API logs:
 
-```json
-{
-  "category": "bottle",
-  "image_path": "data/bottle/test/good/018.png",
-  "anomaly_score": 0.12,
-  "threshold": 0.13,
-  "prediction": "normal"
-}
+```bash
+docker compose logs -f api
 ```
 
-## Git and generated artifacts
+Show Airflow logs:
 
-The following local artifacts are not intended to be committed:
+```bash
+docker compose logs -f airflow
+```
+
+Show MLflow logs:
+
+```bash
+docker compose logs -f mlflow
+```
+
+Show PostgreSQL logs:
+
+```bash
+docker compose logs -f postgres
+```
+
+Restart one service:
+
+```bash
+docker compose restart api
+```
+
+Rebuild the API:
+
+```bash
+docker compose up -d --build api
+```
+
+Start everything:
+
+```bash
+docker compose up -d
+```
+
+Stop everything:
+
+```bash
+docker compose down
+```
+
+---
+
+# Git
+
+The main source files for the data-automation pipeline are:
+
+```text
+src/training.py
+api/main.py
+airflow/dags/training_dag.py
+docker-compose.yml
+database/load_data.py
+```
+
+Runtime files should normally not be committed:
 
 ```text
 data/
 models/
+mlflow_data/
 mlflow.db
 mlruns/
-mlartifacts/
 .venv/
 ```
 
-Source code and configuration are versioned with Git. Models and experiment
-results are tracked with MLflow.
+---
 
-## Next step
+# Current Status
 
-The next task is to register the trained models in the MLflow Model Registry,
-compare new candidates with the current champion and promote only better models.
+Implemented:
+
+* PostgreSQL dataset metadata
+* Fixed test dataset
+* Three simulated training batches
+* TensorFlow convolutional autoencoder
+* FastAPI training API
+* Automatic batch release
+* Airflow orchestration
+* Docker Compose services
+* MLflow experiment tracking
+* Cumulative retraining
+
+Next planned steps:
+
+* MLflow Model Registry
+* Compare candidate models
+* Select or promote the best model
+* Dataset versioning with DVC
+* CI/CD improvements
+
+---
 
 ## Authors
 
-- Ayoub
-- Mohamed
+* Ayoub
+* Mohamed
+* Pavel
