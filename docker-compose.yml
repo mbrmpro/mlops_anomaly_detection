@@ -1,96 +1,144 @@
 services:
 
+  # ========================================================
+  # POSTGRESQL
+  # ========================================================
 
   postgres:
-
     image: postgres:16
-
     container_name: anomaly_postgres
 
-
     environment:
-
       POSTGRES_DB: anomaly_db
-
       POSTGRES_USER: anomaly_user
-
       POSTGRES_PASSWORD: anomaly_password
 
-
     ports:
-
       - "5432:5432"
 
-
     volumes:
-
       - postgres_data:/var/lib/postgresql/data
-
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
 
-
     healthcheck:
-
-      test: ["CMD-SHELL", "pg_isready -U anomaly_user -d anomaly_db"]
-
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U anomaly_user -d anomaly_db"
+        ]
       interval: 5s
-
       timeout: 5s
-
       retries: 5
 
 
+  # ========================================================
+  # MLFLOW
+  # ========================================================
 
-  api:
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.16.0
+    container_name: anomaly_mlflow
 
-    image: anomaly-api:dev
-
-    container_name: anomaly_api
-
+    command:
+      - mlflow
+      - server
+      - --backend-store-uri
+      - sqlite:////mlflow/mlflow.db
+      - --artifacts-destination
+      - /mlflow/artifacts
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
+      - --allowed-hosts
+      - localhost:*,127.0.0.1:*,mlflow:5000
 
     ports:
+      - "5001:5000"
 
+    volumes:
+      - ./mlflow_data:/mlflow
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+
+  # ========================================================
+  # FASTAPI
+  # ========================================================
+
+  api:
+    build: .
+    image: anomaly-api:dev
+    container_name: anomaly_api
+
+    ports:
       - "8000:8000"
 
-    environment: 
-      DATABASE_URL: ${DATABASE_URL} 
-      POSTGRES_HOST: postgres 
-      POSTGRES_PORT: 5432 
-      POSTGRES_DB: ${POSTGRES_DB} 
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    
+    environment:
+
+      DATABASE_URL: postgresql+psycopg2://anomaly_user:anomaly_password@postgres:5432/anomaly_db
+
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: anomaly_db
+      POSTGRES_USER: anomaly_user
+      POSTGRES_PASSWORD: anomaly_password
+
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_EXPERIMENT_NAME: anomaly-detection-cae
+
     volumes:
       - ./models:/app/models
       - ./data:/app/data:ro
 
-
     depends_on:
 
       postgres:
+        condition: service_healthy
 
+      mlflow:
         condition: service_healthy
 
 
-  airflow: 
-    image: apache/airflow:2.10.5 
-    container_name: anomaly_airflow 
-    
-    command: standalone 
+  # ========================================================
+  # AIRFLOW
+  # ========================================================
 
-    ports: 
-      - "8080:8080"
- 
-    environment: 
-      AIRFLOW__CORE__LOAD_EXAMPLES:  "false"
+  airflow:
+    image: apache/airflow:2.10.5
+    container_name: anomaly_airflow
 
-    volumes: 
-      - ./airflow/dags:/opt/airflow/dags 
-    
-    depends_on: 
+    command: standalone
+
+    ports:
+      - "8081:8080"
+
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+
+    depends_on:
+
       api:
         condition: service_started
 
+
+# ==========================================================
+# VOLUMES
+# ==========================================================
 
 volumes:
 
