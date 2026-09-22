@@ -15,7 +15,7 @@ The reconstruction error is used to calculate an anomaly score.
 
 ## Architecture
 
-The project uses:
+The project is using:
 
 * **PostgreSQL** — stores image metadata and training batch status
 * **FastAPI** — exposes training, prediction and batch-management endpoints
