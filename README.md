@@ -527,9 +527,10 @@ confusion matrix
 It also stores:
 
 ```text
-evaluation.json
-threshold.json
-model artifacts
+reports/evaluation.json
+reports/threshold.json
+model/cae.keras
+model/threshold.json
 ```
 
 Example MLflow runs:
@@ -547,6 +548,127 @@ cae-bottle-batch-3
 cae-wood-batch-3
 cae-pill-batch-3
 ```
+
+---
+
+# Champion Model (MLflow Model Registry)
+
+MLflow is the only place where models are stored and selected.
+
+Each category has one registered model:
+
+```text
+cae-bottle
+cae-wood
+cae-pill
+```
+
+After every successful training run (with the default `save_model: true`):
+
+```text
+1. model/cae.keras + model/threshold.json are logged to the MLflow run
+        |
+        v
+2. they are registered as a new version of cae-<category>
+        |
+        v
+3. test_auroc of the new version is compared with the current champion
+        |
+        v
+4. the alias "champion" moves to the new version
+   only if its test_auroc is strictly higher
+   (the first version of a category always becomes champion)
+```
+
+`test_auroc` is measured on the fixed test set, so all runs are comparable.
+On a tie the current champion is kept.
+
+The run tag `candidate_status` records the decision of each run:
+
+```text
+promoted   -> the run became champion when it finished
+rejected   -> the champion was better, nothing changed
+candidate  -> trained with --no-save / save_model=false, not registered
+```
+
+The current champion is always the version with the `@champion` alias:
+
+```text
+MLflow UI -> Models -> cae-bottle -> Aliases: champion
+```
+
+Prediction always loads:
+
+```text
+models:/cae-<category>@champion
+```
+
+After a promotion the API loads the new champion on the next request.
+No restart and no local model file is needed.
+
+## Verify the Champion Workflow
+
+Rebuild the API so it contains the current code:
+
+```bash
+docker compose up -d --build api
+```
+
+Release data and train model A:
+
+```bash
+curl -X POST http://localhost:8000/batches/release-next
+
+curl -X POST http://localhost:8000/training \
+-H "Content-Type: application/json" \
+-d '{"category": "bottle", "epochs": 1}'
+```
+
+Train model B (more data or more epochs):
+
+```bash
+curl -X POST http://localhost:8000/batches/release-next
+
+curl -X POST http://localhost:8000/training \
+-H "Content-Type: application/json" \
+-d '{"category": "bottle", "epochs": 3}'
+```
+
+Each response contains `result.model_registry`:
+
+```json
+{
+  "model_name": "cae-bottle",
+  "model_version": "2",
+  "champion_metric": "test_auroc",
+  "candidate_score": 0.71,
+  "previous_champion_version": "1",
+  "previous_champion_score": 0.64,
+  "promoted": true
+}
+```
+
+Compare `test_auroc` of both runs in the MLflow UI and check the `champion` alias under **Models**.
+
+Run a prediction:
+
+```bash
+curl -X POST http://localhost:8000/predict \
+-H "Content-Type: application/json" \
+-d '{"image_path": "data/bottle/test/good/<image>.png", "category": "bottle"}'
+```
+
+The response shows which model was used:
+
+```json
+{
+  "prediction": "normal",
+  "model_name": "cae-bottle",
+  "model_version": "2"
+}
+```
+
+`model_version` is always the version that currently has the `champion` alias.
 
 ---
 
@@ -589,10 +711,16 @@ Example:
 python src/training.py bottle --epochs 1
 ```
 
-For a quick test without replacing the saved model:
+For a quick test that is logged in MLflow but never registered or promoted:
 
 ```bash
 python src/training.py bottle --epochs 1 --no-save
+```
+
+Evaluate the current champion without retraining:
+
+```bash
+python src/evaluate.py bottle
 ```
 
 Airflow is preferred for the complete automated workflow.
@@ -687,7 +815,10 @@ PostgreSQL → localhost:5432
 10. Metrics and artifacts are logged in MLflow
         |
         v
-11. Next Airflow run releases the next batch
+11. The new model becomes champion only if its test_auroc is higher
+        |
+        v
+12. Next Airflow run releases the next batch
 ```
 
 ---
@@ -789,12 +920,12 @@ Implemented:
 * Docker Compose services
 * MLflow experiment tracking
 * Cumulative retraining
+* MLflow Model Registry
+* Comparison of candidate models with the champion
+* Automatic champion promotion used by prediction
 
 Next planned steps:
 
-* MLflow Model Registry
-* Compare candidate models
-* Select or promote the best model
 * Dataset versioning with DVC
 * CI/CD improvements
 
