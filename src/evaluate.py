@@ -1,4 +1,4 @@
-"""Evaluate saved CAE models without retraining them.
+"""Evaluate the MLflow champion CAE models without retraining them.
 
 This script reports three views of each model:
 1. the threshold saved during training;
@@ -13,7 +13,6 @@ import json
 from pathlib import Path
 
 import numpy as np
-import tensorflow as tf
 from sklearn.metrics import (
     accuracy_score,
     confusion_matrix,
@@ -24,6 +23,7 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import train_test_split
 
+from predict import load_champion
 from training import build_image_dataset, compute_scores, get_test_data
 
 
@@ -79,14 +79,7 @@ def classification_metrics(
 
 def evaluate_category(category: str) -> dict:
     model_dir = Path("models") / category
-    model_path = model_dir / "cae.keras"
-    threshold_path = model_dir / "threshold.json"
-
-    if not model_path.exists() or not threshold_path.exists():
-        raise FileNotFoundError(f"Missing saved model or threshold for '{category}'")
-
-    model = tf.keras.models.load_model(model_path, compile=False)
-    saved_threshold = json.loads(threshold_path.read_text())["threshold"]
+    model, saved_threshold, model_version = load_champion(category)
 
     test_paths, labels = get_test_data(category)
     score_components = compute_scores(model, build_image_dataset(test_paths))
@@ -108,6 +101,7 @@ def evaluate_category(category: str) -> dict:
 
     report = {
         "category": category,
+        "model_version": model_version,
         "saved_threshold_full_test": classification_metrics(
             labels,
             scores,
@@ -127,6 +121,7 @@ def evaluate_category(category: str) -> dict:
         "holdout_samples": int(len(holdout_indices)),
     }
 
+    model_dir.mkdir(parents=True, exist_ok=True)
     output_path = model_dir / "evaluation.json"
     output_path.write_text(json.dumps(report, indent=4))
     return report
@@ -144,6 +139,7 @@ def main() -> None:
         calibrated = report["calibrated_holdout"]
 
         print(f"\n========== EVALUATION: {category} ==========")
+        print(f"Champion version:              {report['model_version']}")
         print(f"AUROC:                         {saved['auroc']:.4f}")
         print(f"Saved-threshold F1:            {saved['f1']:.4f}")
         print(f"Optimistic notebook-style F1: {optimistic['f1']:.4f}")
