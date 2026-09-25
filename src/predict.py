@@ -2,12 +2,22 @@ from pathlib import Path
 
 import json
 
+import os
+
 import sys
 
+import tempfile
+
+
+import mlflow
 
 import numpy as np
 
 import tensorflow as tf
+
+from mlflow import MlflowClient
+
+from mlflow.exceptions import MlflowException
 
 
 
@@ -19,6 +29,19 @@ import tensorflow as tf
 
 
 IMG_SIZE = 128
+
+MLFLOW_TRACKING_URI = os.getenv(
+    "MLFLOW_TRACKING_URI",
+    "http://127.0.0.1:5001",
+)
+
+# Same registry names as src/training.py: model "cae-<category>",
+# alias "champion" on the version used for prediction.
+CHAMPION_ALIAS = "champion"
+
+# Champion already loaded per category: {category: (version, model, threshold)}.
+# A new champion version is downloaded automatically after a promotion.
+_loaded_champions = {}
 
 
 
@@ -146,62 +169,56 @@ def compute_anomaly_score(model, image):
 
 # ==========================================================
 
-# LOAD MODEL + THRESHOLD
+# LOAD CHAMPION MODEL + THRESHOLD FROM MLFLOW
 
 # ==========================================================
 
 
-def load_model_and_threshold(category):
+def load_champion(category):
+    """Return (model, threshold, version) of the MLflow champion."""
 
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
-    model_dir = Path("models") / category
+    model_name = f"cae-{category}"
 
+    try:
+        version = MlflowClient().get_model_version_by_alias(
+            model_name,
+            CHAMPION_ALIAS,
+        ).version
+    except MlflowException as error:
+        raise LookupError(
+            f"No champion model in MLflow for '{category}' "
+            f"({model_name}@{CHAMPION_ALIAS}). Train a model first."
+        ) from error
 
-    model_path = model_dir / "cae.keras"
+    loaded = _loaded_champions.get(category)
 
-    threshold_path = model_dir / "threshold.json"
+    if loaded is not None and loaded[0] == version:
+        return loaded[1], loaded[2], version
 
-
-    if not model_path.exists():
-
-        raise FileNotFoundError(
-
-            f"Model not found: {model_path}"
-
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        model_dir = Path(
+            mlflow.artifacts.download_artifacts(
+                artifact_uri=f"models:/{model_name}/{version}",
+                dst_path=tmp_dir,
+            )
         )
 
-
-    if not threshold_path.exists():
-
-        raise FileNotFoundError(
-
-            f"Threshold not found: {threshold_path}"
-
+        # compile=False means that the custom training loss
+        # is not required for inference.
+        model = tf.keras.models.load_model(
+            model_dir / "cae.keras",
+            compile=False,
         )
 
+        threshold = json.loads(
+            (model_dir / "threshold.json").read_text()
+        )["threshold"]
 
-    # compile=False means that the custom training loss
+    _loaded_champions[category] = (version, model, threshold)
 
-    # is not required for inference.
-
-    model = tf.keras.models.load_model(
-
-        model_path,
-
-        compile=False
-
-    )
-
-
-    with open(threshold_path, "r") as file:
-
-        threshold_data = json.load(file)
-
-
-    threshold = threshold_data["threshold"]
-
-
-    return model, threshold
+    return model, threshold, version
 
 
 
@@ -215,7 +232,7 @@ def load_model_and_threshold(category):
 def predict(image_path, category):
 
 
-    model, threshold = load_model_and_threshold(
+    model, threshold, model_version = load_champion(
 
         category
 
@@ -255,7 +272,11 @@ def predict(image_path, category):
 
             else "normal"
 
-        )
+        ),
+
+        "model_name": f"cae-{category}",
+
+        "model_version": model_version,
 
     }
 
@@ -328,5 +349,13 @@ if __name__ == "__main__":
         f"Prediction:    "
 
         f"{result['prediction'].upper()}"
+
+    )
+
+    print(
+
+        f"Model:         "
+
+        f"{result['model_name']} version {result['model_version']}"
 
     )
