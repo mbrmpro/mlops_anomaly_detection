@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import tempfile
 from pathlib import Path
 
 import mlflow
@@ -26,6 +27,8 @@ import mlflow.tensorflow
 import numpy as np
 import psycopg2
 import tensorflow as tf
+
+from mlflow import MlflowClient
 
 from sklearn.metrics import (
     accuracy_score,
@@ -62,6 +65,14 @@ MLFLOW_EXPERIMENT_NAME = os.getenv(
     "MLFLOW_EXPERIMENT_NAME",
     "anomaly-detection-cae",
 )
+
+# Registered model "cae-<category>" keeps one version per saved training run.
+# The alias below marks the version used for prediction (see src/predict.py).
+CHAMPION_ALIAS = "champion"
+
+# Candidate and champion are compared on the fixed test set.
+# AUROC is threshold-independent, which makes it the standard MVTec AD metric.
+CHAMPION_METRIC = "test_auroc"
 
 
 # ==========================================================
@@ -426,6 +437,95 @@ def evaluate(labels, scores, threshold):
 
 
 # ==========================================================
+# MODEL REGISTRY: CHAMPION SELECTION
+# ==========================================================
+
+def register_and_select_champion(model, threshold_info, category):
+    """Register the trained model and promote it if it beats the champion.
+
+    The candidate becomes the champion when no champion exists yet or when
+    its CHAMPION_METRIC is strictly higher. On a tie the champion is kept.
+    """
+
+    client = MlflowClient()
+    run = mlflow.active_run()
+    model_name = f"cae-{category}"
+
+    # The model and its threshold are logged together: prediction needs both.
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        model.save(Path(tmp_dir) / "cae.keras")
+
+        (Path(tmp_dir) / "threshold.json").write_text(
+            json.dumps(threshold_info, indent=4)
+        )
+
+        mlflow.log_artifacts(tmp_dir, artifact_path="model")
+
+    if not client.search_registered_models(
+        filter_string=f"name = '{model_name}'"
+    ):
+        client.create_registered_model(model_name)
+
+    candidate = client.create_model_version(
+        name=model_name,
+        source=f"{run.info.artifact_uri}/model",
+        run_id=run.info.run_id,
+    )
+
+    candidate_score = client.get_run(
+        run.info.run_id
+    ).data.metrics[CHAMPION_METRIC]
+
+    champion_version = client.get_registered_model(
+        model_name
+    ).aliases.get(CHAMPION_ALIAS)
+
+    if champion_version is None:
+        champion_score = None
+        promoted = True
+    else:
+        champion_run_id = client.get_model_version(
+            model_name,
+            champion_version,
+        ).run_id
+
+        champion_score = client.get_run(
+            champion_run_id
+        ).data.metrics[CHAMPION_METRIC]
+
+        promoted = candidate_score > champion_score
+
+    if promoted:
+        client.set_registered_model_alias(
+            model_name,
+            CHAMPION_ALIAS,
+            candidate.version,
+        )
+
+    mlflow.set_tag(
+        "candidate_status",
+        "promoted" if promoted else "rejected",
+    )
+
+    print(
+        f"\n{model_name} version {candidate.version}: "
+        f"{CHAMPION_METRIC}={candidate_score:.4f} | "
+        f"champion version {champion_version}: {champion_score} | "
+        f"{'PROMOTED to champion' if promoted else 'champion kept'}"
+    )
+
+    return {
+        "model_name": model_name,
+        "model_version": candidate.version,
+        "champion_metric": CHAMPION_METRIC,
+        "candidate_score": candidate_score,
+        "previous_champion_version": champion_version,
+        "previous_champion_score": champion_score,
+        "promoted": promoted,
+    }
+
+
+# ==========================================================
 # TRAIN ONE CATEGORY
 # ==========================================================
 
@@ -645,8 +745,6 @@ def _train_category(category, epochs=EPOCHS, save_model=True):
     # RESULT
     # ------------------------------------------------------
 
-    model_dir = Path("models") / category
-
     result = {
         "category": category,
         "mlflow_run_id": mlflow.active_run().info.run_id,
@@ -691,68 +789,35 @@ def _train_category(category, epochs=EPOCHS, save_model=True):
         }
     )
 
+    threshold_info = {
+        "category": category,
+        "available_batches": available_batches,
+        "latest_batch": max(available_batches),
+        "threshold": float(threshold),
+        "threshold_source": "released_normal_training_percentile",
+        "threshold_percentile": THRESHOLD_PERCENTILE,
+    }
+
     mlflow.log_dict(
         result,
         "reports/evaluation.json",
     )
 
     mlflow.log_dict(
-        {
-            "category": category,
-            "available_batches": available_batches,
-            "latest_batch": max(available_batches),
-            "threshold": float(threshold),
-            "threshold_source": "released_normal_training_percentile",
-            "threshold_percentile": THRESHOLD_PERCENTILE,
-        },
+        threshold_info,
         "reports/threshold.json",
     )
 
     # ------------------------------------------------------
-    # SAVE MODEL
+    # REGISTER MODEL AND SELECT CHAMPION
     # ------------------------------------------------------
 
     if save_model:
-        model_dir.mkdir(
-            parents=True,
-            exist_ok=True,
+        result["model_registry"] = register_and_select_champion(
+            model,
+            threshold_info,
+            category,
         )
-
-        model_path = model_dir / "cae.keras"
-        threshold_path = model_dir / "threshold.json"
-        evaluation_path = model_dir / "evaluation.json"
-
-        model.save(model_path)
-
-        threshold_path.write_text(
-            json.dumps(
-                {
-                    "category": category,
-                    "available_batches": available_batches,
-                    "latest_batch": max(available_batches),
-                    "threshold": float(threshold),
-                    "threshold_source": "released_normal_training_percentile",
-                    "threshold_percentile": THRESHOLD_PERCENTILE,
-                },
-                indent=4,
-            )
-        )
-
-        evaluation_path.write_text(
-            json.dumps(
-                result,
-                indent=4,
-            )
-        )
-
-        mlflow.log_artifact(
-            str(model_path),
-            artifact_path="model",
-        )
-
-        print(f"Model:      {model_path}")
-        print(f"Threshold:  {threshold_path}")
-        print(f"Evaluation: {evaluation_path}")
 
     return result
 
@@ -837,7 +902,7 @@ def main():
     parser.add_argument(
         "--no-save",
         action="store_true",
-        help="Train without replacing saved model artifacts.",
+        help="Train without registering the model or changing the champion.",
     )
 
     args = parser.parse_args()
