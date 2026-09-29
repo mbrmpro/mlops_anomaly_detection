@@ -1,5 +1,8 @@
 .venv/
 .git/
+!.git/HEAD
+!.git/refs/
+!.git/packed-refs
 __pycache__/
 *.pyc
 data/

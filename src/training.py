@@ -17,6 +17,7 @@ from __future__ import annotations
 # ==========================================================
 
 import argparse
+import hashlib
 import json
 import os
 import tempfile
@@ -92,6 +93,64 @@ def configure_mlflow():
         # checkpoint=False,
         disable = True
     )
+
+
+# ==========================================================
+# PROVENANCE: GIT COMMIT + DATASET VERSION
+# ==========================================================
+
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+
+
+def get_git_commit():
+    """Return the SHA of the git commit the running code comes from.
+
+    It is read directly from .git: the repository checkout when training
+    runs on the host, or the .git/HEAD and .git/refs files copied into the
+    Docker image at build time (see Dockerfile and .dockerignore).
+    """
+
+    git_dir = PROJECT_DIR / ".git"
+    head = (git_dir / "HEAD").read_text().strip()
+
+    # Detached HEAD: the file already contains the commit SHA.
+    if not head.startswith("ref: "):
+        return head
+
+    ref = head.removeprefix("ref: ")
+    ref_file = git_dir / ref
+
+    if ref_file.exists():
+        return ref_file.read_text().strip()
+
+    # After "git gc" refs are stored in the single file packed-refs.
+    for line in (git_dir / "packed-refs").read_text().splitlines():
+        if line.endswith(" " + ref):
+            return line.split(" ")[0]
+
+    raise RuntimeError(f"Git ref '{ref}' not found in {git_dir}")
+
+
+def file_sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def build_dataset_manifest(train_paths, test_paths, test_labels):
+    """List every training and test image with its label and content hash.
+
+    The SHA-256 of this text is the dataset version: it changes when an
+    image is added, removed, renamed, relabeled or modified.
+    """
+
+    lines = ["split\tis_anomaly\timage_path\tsha256"]
+
+    for path in sorted(train_paths):
+        lines.append(f"train\t0\t{path}\t{file_sha256(path)}")
+
+    for path, label in sorted(zip(test_paths, test_labels)):
+        lines.append(f"test\t{int(label)}\t{path}\t{file_sha256(path)}")
+
+    return "\n".join(lines) + "\n"
 
 
 # ==========================================================
@@ -572,6 +631,25 @@ def _train_category(category, epochs=EPOCHS, save_model=True):
         )
 
     # ------------------------------------------------------
+    # DATASET VERSION (TRAINING + FIXED TEST IMAGES)
+    # ------------------------------------------------------
+
+    dataset_manifest = build_dataset_manifest(
+        all_train_paths,
+        test_paths,
+        test_labels,
+    )
+
+    dataset_version = hashlib.sha256(
+        dataset_manifest.encode("utf-8")
+    ).hexdigest()
+
+    mlflow.set_tag("dataset_version", dataset_version)
+    mlflow.log_text(dataset_manifest, "dataset/manifest.tsv")
+
+    print(f"Dataset version: {dataset_version}")
+
+# ------------------------------------------------------
     # TRAIN / VALIDATION SPLIT
     # ------------------------------------------------------
 
@@ -850,6 +928,8 @@ def train(category, epochs=EPOCHS, save_model=True):
         available_batches
     )
 
+    # Resolved before the run starts: a run without provenance is not created.
+    git_commit = get_git_commit()
     run_name = (
         f"cae-{category}-batch-{latest_batch}"
     )
@@ -865,6 +945,8 @@ def train(category, epochs=EPOCHS, save_model=True):
                 "model_family": "CAE",
                 "candidate_status": "candidate",
                 "latest_batch": str(latest_batch),
+                "git_commit": git_commit,
+
             }
         )
 
@@ -872,6 +954,10 @@ def train(category, epochs=EPOCHS, save_model=True):
             f"MLflow run: {run.info.run_id}"
         )
 
+        print(
+            f"Git commit: {git_commit}"
+        )
+        
         return _train_category(
             category=category,
             epochs=epochs,
