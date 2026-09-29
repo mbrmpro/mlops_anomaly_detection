@@ -6,4 +6,5 @@ data/
 models/
 mlflow.db
 mlruns/
+mlflow_data/
 README.md.save
