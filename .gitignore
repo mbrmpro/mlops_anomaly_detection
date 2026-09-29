@@ -34,6 +34,10 @@ models/**/pre_mlflow_backup/
 # because this repository contains the MLflow
 # experiment metadata and artifacts.
 
+# Runtime data of the Docker MLflow server
+# (backend DB + artifacts, mounted as ./mlflow_data:/mlflow).
+mlflow_data/
+
 # --------------------------------------------------
 # Environment / secrets
 # --------------------------------------------------
