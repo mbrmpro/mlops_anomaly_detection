@@ -87,8 +87,6 @@ def metrics():
 # REQUEST MODELS
 # ==========================================================
 
-# ==========================================================
-
 class TrainingRequest(BaseModel):
     category: str
     epochs: int = 30
