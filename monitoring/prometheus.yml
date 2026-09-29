@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Alerts about API performance (Prometheus UI -> Alerts).
+rule_files:
+  - /etc/prometheus/alert_rules.yml
+
+scrape_configs:
+
+  # FastAPI metrics: request duration/rate by route, CPU and memory.
+  - job_name: anomaly-api
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - api:8000

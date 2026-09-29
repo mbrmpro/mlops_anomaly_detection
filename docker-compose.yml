@@ -136,6 +136,27 @@ services:
         condition: service_started
 
 
+  # ========================================================
+  # PROMETHEUS (API METRICS)
+  # ========================================================
+
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    container_name: anomaly_prometheus
+
+    ports:
+      - "9090:9090"
+
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+
+    depends_on:
+
+      api:
+        condition: service_started
+
+
 # ==========================================================
 # VOLUMES
 # ==========================================================

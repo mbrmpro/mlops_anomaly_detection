@@ -1,0 +1,42 @@
+groups:
+
+  - name: anomaly-api-performance
+    rules:
+
+      # Prometheus cannot reach the API.
+      - alert: AnomalyApiDown
+        expr: up{job="anomaly-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The anomaly detection API is down"
+          description: "Prometheus could not read http://api:8000/metrics for 1 minute."
+
+      # More than 5% of the requests end with a server error (HTTP 5xx).
+      - alert: AnomalyApiHighErrorRate
+        expr: |
+          sum(rate(http_request_duration_seconds_count{status=~"5.."}[5m]))
+            /
+          sum(rate(http_request_duration_seconds_count[5m]))
+            > 0.05
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 5% of the API requests fail"
+          description: "Share of HTTP 5xx responses in the last 5 minutes: {{ $value | humanizePercentage }}."
+
+      # Predictions are slow. /training is not included: training takes minutes.
+      - alert: AnomalyApiSlowPredictions
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket{route="/predict"}[5m]))
+          ) > 2
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Predictions are slow"
+          description: "95% of the /predict requests took up to {{ $value | humanizeDuration }} (limit: 2 s)."

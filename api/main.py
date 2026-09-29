@@ -1,9 +1,12 @@
 import os
+import time
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
+from prometheus_client import CONTENT_TYPE_LATEST, Gauge, Histogram, generate_latest
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
+
 
 from src.training import train
 from src.predict import predict
@@ -28,12 +31,62 @@ if not DATABASE_URL:
 
 engine = create_engine(
     DATABASE_URL,
-    pool_pre_ping=True,
 )
 
 
 # ==========================================================
+# PROMETHEUS METRICS (API PERFORMANCE)
+# ==========================================================
+
+# The four "golden signals" of the API:
+#   traffic, errors, latency -> http_request_duration_seconds (_count, _bucket)
+#   saturation               -> http_requests_in_progress + process CPU / memory
+# route is the endpoint template, e.g. /predict ("other" = docs or 404).
+REQUEST_DURATION = Histogram(
+    "http_request_duration_seconds",
+    "HTTP request duration in seconds.",
+    ["method", "route", "status"],
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 300, 1800),
+)
+
+REQUESTS_IN_PROGRESS = Gauge(
+    "http_requests_in_progress",
+    "HTTP requests currently being processed.",
+)
+
+
+@app.middleware("http")
+async def record_request_metrics(request: Request, call_next):
+    # Prometheus scrapes /metrics every 15 s: do not count these requests.
+    if request.url.path == "/metrics":
+        return await call_next(request)
+
+    start = time.perf_counter()
+
+    with REQUESTS_IN_PROGRESS.track_inprogress():
+        response = await call_next(request)
+
+    route = request.scope.get("route")
+
+    REQUEST_DURATION.labels(
+        method=request.method,
+        route=route.path if route else "other",
+        status=str(response.status_code),
+    ).observe(time.perf_counter() - start)
+
+    return response
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics():
+    # Also contains process_cpu_seconds_total and process_resident_memory_bytes.
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+# ==========================================================
 # REQUEST MODELS
+# ==========================================================
+
 # ==========================================================
 
 class TrainingRequest(BaseModel):
