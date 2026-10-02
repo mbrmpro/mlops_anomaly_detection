@@ -1,5 +1,6 @@
 import os
 import time
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from prometheus_client import CONTENT_TYPE_LATEST, Gauge, Histogram, generate_latest
@@ -7,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
-
+from src.monitoring import create_tables, log_prediction, run_drift_report
 from src.training import train
 from src.predict import predict
 
@@ -16,8 +17,16 @@ from src.predict import predict
 # CONFIG
 # ==========================================================
 
+@asynccontextmanager
+async def lifespan(app):
+    # Tables for prediction logs and drift reports.
+    create_tables(engine)
+    yield
+
+
 app = FastAPI(
-    title="Anomaly Detection API"
+    title="Anomaly Detection API",
+    lifespan=lifespan,
 )
 
 DATABASE_URL = os.getenv(
@@ -31,6 +40,7 @@ if not DATABASE_URL:
 
 engine = create_engine(
     DATABASE_URL,
+    pool_pre_ping=True,
 )
 
 
@@ -95,6 +105,10 @@ class TrainingRequest(BaseModel):
 
 class PredictionRequest(BaseModel):
     image_path: str
+    category: str
+
+
+class DriftRequest(BaseModel):
     category: str
 
 
@@ -312,8 +326,39 @@ def prediction_endpoint(
     request: PredictionRequest,
 ):
     try:
-        return predict(
+        result = predict(
             request.image_path,
+            request.category,
+        )
+
+        # Input features are the "current data" for drift monitoring.
+        log_prediction(engine, result)
+
+        return result
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=str(error),
+        )
+
+
+# ==========================================================
+# DATA DRIFT (EVIDENTLY)
+# ==========================================================
+
+@app.post("/monitoring/drift")
+def drift_endpoint(
+    request: DriftRequest,
+):
+    """
+    Compare the inputs of recent predictions with the
+    released training images and store the result for Grafana.
+    """
+
+    try:
+        return run_drift_report(
+            engine,
             request.category,
         )
 

@@ -157,6 +157,36 @@ services:
         condition: service_started
 
 
+  # ========================================================
+  # GRAFANA (DASHBOARDS)
+  # ========================================================
+
+  grafana:
+    image: grafana/grafana:13.2.2
+    container_name: anomaly_grafana
+
+    ports:
+      - "3000:3000"
+
+    environment:
+      # Dashboards can be viewed without login (edit: admin / admin).
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+
+    volumes:
+      - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+    depends_on:
+
+      prometheus:
+        condition: service_started
+
+      postgres:
+        condition: service_healthy
+
+
 # ==========================================================
 # VOLUMES
 # ==========================================================

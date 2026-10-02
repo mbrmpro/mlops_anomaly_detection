@@ -1,0 +1,23 @@
+apiVersion: 1
+
+datasources:
+
+  # API / Application Health dashboard
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+
+  # Data Drift dashboard (tables written by src/monitoring.py)
+  - name: PostgreSQL
+    uid: postgres
+    type: grafana-postgresql-datasource
+    url: postgres:5432
+    user: anomaly_user
+    secureJsonData:
+      password: anomaly_password
+    jsonData:
+      database: anomaly_db
+      sslmode: disable
