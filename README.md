@@ -1,7 +1,25 @@
 # Industrial Image Anomaly Detection — MLOps
 
-This project implements an MLOps pipeline for industrial image anomaly detection using the MVTec AD dataset.
+![Programme](https://img.shields.io/badge/Programme-Machine%20Learning%20Engineer-0A66C2?style=flat-square) ![School](https://img.shields.io/badge/School-Liora%20%C2%B7%20ex%20DataScientest-111827?style=flat-square) ![Certification](https://img.shields.io/badge/Certification-Universit%C3%A9%20Paris%201%20Panth%C3%A9on--Sorbonne-8B1E3F?style=flat-square)
 
+> **Final certification project — Machine Learning Engineer, MLOps track.**
+> Built and submitted as the graduation project of the **Machine Learning Engineer** programme at **Liora** (formerly **DataScientest**) — a programme whose certificate is issued by **Panthéon Sorbonne – Continuing Education** (Université Paris 1 Panthéon-Sorbonne). This repository is the MLOps part of the bootcamp.
+
+| Item | Detail |
+|---|---|
+| **Programme** | Machine Learning Engineer — MLOps part of the bootcamp |
+| **School** | Liora (formerly DataScientest), Paris |
+| **Certification** | Certificate issued by Panthéon Sorbonne – Continuing Education (Université Paris 1 Panthéon-Sorbonne) |
+| **Deliverable** | Final graduation project — anomaly detection with machine-learning Python libraries |
+| **Mentor** | Fradin Nicolas (Liora) |
+| **Authors** | Ayoub Hamdoun, Mohamed Bouraaman, Paweł Flak |
+| **Dataset** | MVTec AD — industrial visual-inspection benchmark |
+
+---
+
+## What the application does
+
+The application **looks at a photograph of a manufactured part and decides whether that part is flawless or defective — without ever having been shown a single defective example.** It does not learn what a defect looks like; it learns, with machine-learning libraries, what *normal* looks like, and then measures how far a submitted image departs from that learned normality.
 The project currently supports three categories:
 
 * Bottle
