@@ -1,0 +1,26 @@
+/* SPOTLIGHT presentation. The component renders in a shadow root, so these rules reach
+   only the Spotlight's own elements. Colors and fonts follow the Streamlit theme through
+   the --st-* variables that Components v2 provides. */
+.spotlight-start { border: 1px solid var(--st-primary-color, #ff4b4b); background: transparent; color: var(--st-primary-color, #ff4b4b); padding: 5px 10px; border-radius: var(--st-button-radius, 6px); font: 600 11px var(--st-code-font, monospace); letter-spacing: .1em; cursor: pointer; }
+.spotlight-start:hover { background: var(--st-secondary-background-color, #f0f2f6); }
+.spotlight-dialog { inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; overflow: hidden; color: var(--st-text-color, #31333f); background: transparent; font-family: var(--st-font, sans-serif); }
+.spotlight-dialog::backdrop { background: transparent; }
+.spotlight-dialog.spotlight-dim { background: rgba(14, 17, 23, .78); }
+.spotlight-hole { position: absolute; border: 2px solid var(--st-primary-color, #ff4b4b); box-shadow: 0 0 0 200vmax rgba(14, 17, 23, .78); pointer-events: none; }
+.spotlight-popover { position: absolute; width: min(420px, calc(100% - 24px)); max-height: calc(100% - 24px); box-sizing: border-box; display: flex; flex-direction: column; border: 1px solid var(--st-border-color, #d5dae5); border-radius: var(--st-base-radius, 8px); background: var(--st-background-color, #ffffff); box-shadow: 0 18px 48px rgba(0, 0, 0, .35); }
+.spotlight-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 8px 0 16px; }
+.spotlight-count { color: var(--st-primary-color, #ff4b4b); font: 600 10px var(--st-code-font, monospace); letter-spacing: .12em; }
+.spotlight-close { border: 0; background: transparent; color: inherit; opacity: .6; padding: 4px 8px; font: 18px/1 var(--st-font, sans-serif); cursor: pointer; }
+.spotlight-close:hover { opacity: 1; }
+.spotlight-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 2px 16px 0; }
+.spotlight-title { margin: 2px 0 0; font-size: 18px; font-weight: 600; line-height: 1.25; }
+.spotlight-sections { margin: 0; }
+.spotlight-sections dt { margin-top: 9px; opacity: .65; font: 600 10px var(--st-code-font, monospace); letter-spacing: .1em; text-transform: uppercase; }
+.spotlight-sections dd { margin: 3px 0 0; font-size: 13px; line-height: 1.5; }
+.spotlight-sections .spotlight-decision { border-left: 2px solid var(--st-primary-color, #ff4b4b); padding-left: 10px; }
+.spotlight-sections code { font: 12px var(--st-code-font, monospace); color: var(--st-code-text-color, inherit); background: var(--st-code-background-color, #f0f2f6); padding: 1px 4px; border-radius: 3px; overflow-wrap: anywhere; }
+.spotlight-missing { margin: 9px 0 0; color: var(--st-orange-text-color, #b85c00); font: 11px var(--st-code-font, monospace); }
+.spotlight-actions { display: flex; justify-content: flex-end; gap: 6px; padding: 10px 16px 12px; }
+.spotlight-actions button { min-width: 72px; border: 1px solid var(--st-border-color, #d5dae5); border-radius: var(--st-button-radius, 6px); background: var(--st-secondary-background-color, #f0f2f6); color: inherit; padding: 7px 12px; font: 600 11px var(--st-code-font, monospace); letter-spacing: .08em; cursor: pointer; }
+.spotlight-actions button:disabled { opacity: .4; cursor: default; }
+.spotlight-actions .spotlight-next { border-color: var(--st-primary-color, #ff4b4b); color: var(--st-primary-color, #ff4b4b); }
