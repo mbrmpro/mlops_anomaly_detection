@@ -187,6 +187,27 @@ services:
         condition: service_healthy
 
 
+  # ========================================================
+  # STREAMLIT (FRONTEND)
+  # ========================================================
+
+  streamlit:
+    build: ./frontend
+    image: anomaly-streamlit:dev
+    container_name: anomaly_streamlit
+
+    ports:
+      - "8501:8501"
+
+    environment:
+      API_URL: http://api:8000
+
+    depends_on:
+
+      api:
+        condition: service_started
+
+
 # ==========================================================
 # VOLUMES
 # ==========================================================

@@ -111,10 +111,14 @@ def image_features(image_path):
 # PREDICTION LOG (CURRENT DATA)
 # ==========================================================
 
-def log_prediction(engine, result):
-    """Store one prediction and the features of its input image."""
+def log_prediction(engine, result, image_file=None):
+    """Store one prediction and the features of its input image.
 
-    features = image_features(result["image_path"])
+    image_file: file to read the features from when it is not
+    result["image_path"] (for example the temporary file of an upload).
+    """
+
+    features = image_features(image_file or result["image_path"])
 
     with engine.begin() as connection:
         connection.execute(

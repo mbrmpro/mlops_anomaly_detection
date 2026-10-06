@@ -1,8 +1,11 @@
 import os
+import tempfile
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi.responses import FileResponse
 from prometheus_client import CONTENT_TYPE_LATEST, Gauge, Histogram, generate_latest
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
@@ -367,3 +370,136 @@ def drift_endpoint(
             status_code=500,
             detail=str(error),
         )
+
+
+# ==========================================================
+# PREDICTION FROM AN UPLOADED IMAGE (STREAMLIT)
+# ==========================================================
+
+@app.post("/predict/upload")
+def prediction_upload_endpoint(
+    category: str = Form(...),
+    file: UploadFile = File(...),
+):
+    """
+    Predict an uploaded image.
+
+    The image is saved to a temporary file and passed to
+    the same predict() function that POST /predict uses.
+    """
+
+    try:
+        suffix = Path(file.filename or "").suffix
+
+        with tempfile.NamedTemporaryFile(suffix=suffix) as image_file:
+            image_file.write(file.file.read())
+            image_file.flush()
+
+            result = predict(
+                image_file.name,
+                category,
+            )
+
+            # Show the uploaded file name instead of the temporary path.
+            result["image_path"] = file.filename
+
+            # Uploads are "current data" for drift monitoring too.
+            # The features are read while the temporary file still exists.
+            log_prediction(engine, result, image_file=image_file.name)
+
+        return result
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=str(error),
+        )
+
+
+# ==========================================================
+# TEST SET EXAMPLES (STREAMLIT)
+# ==========================================================
+
+@app.get("/images/examples")
+def image_examples(
+    category: str,
+):
+    """
+    One image of the fixed test set per defect type
+    (good, broken_large, ...) together with its true label.
+    """
+
+    try:
+        with engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    """
+                    SELECT DISTINCT ON (defect_type)
+                        id,
+                        image_path,
+                        defect_type,
+                        is_anomaly
+                    FROM images
+                    WHERE category = :category
+                      AND split = 'test'
+                    ORDER BY defect_type, image_path;
+                    """
+                ),
+                {"category": category},
+            ).fetchall()
+
+        examples = [
+            {
+                "id": row[0],
+                "image_path": row[1],
+                "defect_type": row[2],
+                "is_anomaly": bool(row[3]),
+            }
+            for row in rows
+        ]
+
+        # Normal example first, then the defect types.
+        examples.sort(
+            key=lambda example: (example["is_anomaly"], example["defect_type"])
+        )
+
+        return {
+            "category": category,
+            "examples": examples,
+        }
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=str(error),
+        )
+
+
+@app.get("/images/{image_id}/file")
+def image_file(
+    image_id: int,
+):
+    """
+    Return the file of an image registered in the images table.
+    Only paths stored in PostgreSQL can be read.
+    """
+
+    with engine.connect() as connection:
+        image_path = connection.execute(
+            text(
+                """
+                SELECT image_path
+                FROM images
+                WHERE id = :image_id;
+                """
+            ),
+            {"image_id": image_id},
+        ).scalar()
+
+    if image_path is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Image {image_id} not found",
+        )
+
+    return FileResponse(image_path)
