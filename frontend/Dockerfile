@@ -8,5 +8,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py spotlight.py ./
 COPY spotlight/ ./spotlight/
+COPY .streamlit/ ./.streamlit/
 
 CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501", "--browser.gatherUsageStats=false"]

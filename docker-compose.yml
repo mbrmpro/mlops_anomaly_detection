@@ -201,6 +201,9 @@ services:
 
     environment:
       API_URL: http://api:8000
+      # Browser links to the other tools; empty outside GitHub Codespaces.
+      CODESPACE_NAME: ${CODESPACE_NAME:-}
+      GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN: ${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-}
 
     depends_on:
 
