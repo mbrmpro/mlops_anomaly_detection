@@ -8,9 +8,11 @@ The walkthrough is presentation only. It reads the rendered page and may select
 a story tab to show a target. It never calls the API and never changes model,
 database, prediction or training state.
 
-Every step explains one page element with four texts: what, role, code and
-decision. A backtick pair marks a code identifier, which is rendered as <code>.
-The optional "tab" field names the story tab that must be visible first.
+One step per tab, in story order, after one overview step. Every step explains
+the highlighted part with four short texts: what, role, code and decision. A
+backtick pair marks a code identifier, which is rendered as <code>. The "tab"
+field names the story tab that must be visible first; it must be one of the
+tab labels that app.py passes to render_spotlight().
 """
 
 from pathlib import Path
@@ -25,90 +27,132 @@ TAB_ROOT = ".st-key-story-tabs"
 STEPS = [
     {
         "target": ".st-key-spotlight-title",
-        "title": "What this app does",
+        "title": "Overview",
         "keyword": "overview",
-        "what": "Finds defective products in photos.",
-        "role": "Tells the project as a short story.",
+        "what": "The MLOps pipeline of an image anomaly detector.",
+        "role": "One tab per component, in processing order.",
         "code": "`frontend/app.py`",
-        "decision": "Streamlit only shows results. The API does the work.",
+        "decision": "Streamlit presents; the API executes.",
     },
     {
-        "target": ".st-key-spotlight-system-status",
-        "title": "System status",
-        "keyword": "health",
-        "what": "Green means the API and the database are running.",
-        "role": "Shows the system is ready before you test it.",
-        "code": "`GET /health/db`",
-        "decision": "The page checks everything through the API.",
+        "target": ".st-key-spotlight-flow",
+        "tab": "1 · Data flow",
+        "title": "Data flow",
+        "keyword": "three loops",
+        "what": "Training, serving and monitoring.",
+        "role": "Arrow numbers give the processing order.",
+        "code": "`docker-compose.yml`",
+        "decision": "One database and one API keep the architecture simple.",
     },
     {
-        "target": ".st-key-story-tabs [role=\"tablist\"]",
-        "title": "Six tabs",
-        "keyword": "navigation",
-        "what": "The story in six steps, from problem to system.",
-        "role": "The only navigation on the page.",
-        "code": "`st.tabs()`",
-        "decision": "Problem first, architecture last.",
+        "target": ".st-key-spotlight-compose",
+        "tab": "2 · Docker Compose",
+        "title": "Docker Compose",
+        "keyword": "infrastructure",
+        "what": "Seven services in one network.",
+        "role": "Start order is enforced: the API waits for healthy dependencies.",
+        "code": "`docker compose up -d --build`",
+        "decision": "One container per responsibility: each restarts independently.",
     },
     {
-        "target": ".st-key-spotlight-challenge",
-        "tab": "1 · The challenge",
-        "title": "The challenge",
-        "keyword": "normal only",
-        "what": "Defects are rare and every one looks different.",
-        "role": "So the model learns only what normal looks like.",
+        "target": ".st-key-spotlight-postgres",
+        "tab": "3 · PostgreSQL",
+        "title": "PostgreSQL",
+        "keyword": "data",
+        "what": "All images with category and ground-truth label.",
+        "role": "Releases training data in batches; logs every prediction.",
+        "code": "`database/init.sql`",
+        "decision": "A fixed test set makes every model comparable.",
+    },
+    {
+        "target": ".st-key-spotlight-airflow",
+        "tab": "4 · Airflow",
+        "title": "Airflow",
+        "keyword": "schedule",
+        "what": "Hourly DAG: batch release, then training.",
+        "role": "Simulates data arriving over time.",
+        "code": "`airflow/dags/training_dag.py`",
+        "decision": "Retraining only on new data.",
+    },
+    {
+        "target": ".st-key-spotlight-fastapi",
+        "tab": "5 · FastAPI",
+        "title": "FastAPI",
+        "keyword": "entry point",
+        "what": "Single entry point of the system.",
+        "role": "Release, train, predict, check drift.",
+        "code": "`api/main.py`",
+        "decision": "One place to measure, secure and change.",
+    },
+    {
+        "target": ".st-key-spotlight-tensorflow",
+        "tab": "6 · TensorFlow",
+        "title": "TensorFlow",
+        "keyword": "model",
+        "what": "A convolutional autoencoder.",
+        "role": "Reconstructs normal images; defects reconstruct poorly.",
         "code": "`src/training.py`",
-        "decision": "What the model cannot rebuild well is a defect.",
-    },
-    {
-        "target": ".st-key-spotlight-data",
-        "tab": "2 · The data",
-        "title": "The data",
-        "keyword": "batches",
-        "what": "Photos from the MVTec AD dataset.",
-        "role": "Training images arrive in three batches, like in a factory.",
-        "code": "`GET /batches/status`",
-        "decision": "A fixed test set makes every new model comparable.",
+        "decision": "No labelled defects required.",
     },
     {
         "target": ".st-key-spotlight-mlflow",
-        "tab": "3 · MLflow",
-        "title": "Training with MLflow",
-        "keyword": "experiment tracking",
-        "what": "Rebuilds each image pixel by pixel, epoch after epoch.",
-        "role": "MLflow saves each run: settings, losses, scores, model.",
-        "code": "`mlflow.log_metric()`",
-        "decision": "A new model becomes champion only if it scores higher.",
+        "tab": "7 · MLflow",
+        "title": "MLflow",
+        "keyword": "registry",
+        "what": "Every run: parameters, metrics, model.",
+        "role": "The alias `champion` moves only to a higher `test_auroc`.",
+        "code": "`models:/cae-<category>@champion`",
+        "decision": "A weaker model is never promoted.",
     },
     {
-        "target": ".st-key-spotlight-try-model",
-        "tab": "4 · Try the model",
-        "title": "Try the model",
-        "keyword": "prediction",
-        "what": "Pick an image, get a verdict: normal or anomaly.",
-        "role": "Sends the image to the trained model.",
+        "target": ".st-key-spotlight-prediction",
+        "tab": "8 · Prediction",
+        "title": "Prediction",
+        "keyword": "verdict",
+        "what": "One click scores one test image.",
+        "role": "Score above the threshold means anomaly.",
         "code": "`POST /predict`",
-        "decision": "Test images have a known answer, so we can check the model.",
+        "decision": "Test images carry ground truth: each verdict is verifiable.",
     },
     {
-        "target": ".st-key-spotlight-decision",
-        "tab": "5 · How it decides",
-        "title": "How it decides",
-        "keyword": "anomaly score",
-        "what": "One number: how badly the image was rebuilt.",
-        "role": "Above the threshold means anomaly.",
-        "code": "`src/predict.py`",
-        "decision": "The threshold allows about 5% false alarms.",
+        "target": ".st-key-spotlight-streamlit",
+        "tab": "9 · Streamlit",
+        "title": "Streamlit",
+        "keyword": "presentation layer",
+        "what": "This page and this walkthrough.",
+        "role": "An API client only.",
+        "code": "`frontend/spotlight.py`",
+        "decision": "UI changes cannot affect the model.",
     },
     {
-        "target": ".st-key-spotlight-system",
-        "tab": "6 · Behind the scenes",
-        "title": "Behind the scenes",
-        "keyword": "architecture",
-        "what": "All services that run the project.",
-        "role": "Streamlit, FastAPI, model, PostgreSQL, MLflow and Airflow.",
-        "code": "`docker-compose.yml`",
-        "decision": "One job per service, so each can change alone.",
+        "target": ".st-key-spotlight-prometheus",
+        "tab": "10 · Prometheus",
+        "title": "Prometheus",
+        "keyword": "health",
+        "what": "Traffic, errors, response time, memory.",
+        "role": "Scrapes the API every 15 s; three alert rules.",
+        "code": "`GET /metrics`",
+        "decision": "Measured inside the API: every caller is counted.",
+    },
+    {
+        "target": ".st-key-spotlight-quality",
+        "tab": "11 · Holding Quality Evidence",
+        "title": "Holding Quality Evidence",
+        "keyword": "quality evidence",
+        "what": "Drift check of four image features with Evidently.",
+        "role": "Recent inputs vs training images, hourly; every completed check is stored.",
+        "code": "`POST /monitoring/drift`",
+        "decision": "Data quality is evidenced, not assumed.",
+    },
+    {
+        "target": ".st-key-spotlight-grafana",
+        "tab": "12 · Grafana",
+        "title": "Grafana",
+        "keyword": "operations",
+        "what": "Two dashboards: API health and data drift.",
+        "role": "Basis for decisions on new data.",
+        "code": "`monitoring/grafana/dashboards/`",
+        "decision": "The system monitors itself end to end.",
     },
 ]
 
@@ -119,8 +163,24 @@ _spotlight = st.components.v2.component(
 )
 
 
-def render_spotlight():
+def check_tabs(tab_labels):
+    """Fail at page start when a step names a tab that app.py does not render.
+
+    A wrong label would otherwise leave that step pointing at a hidden tab.
+    """
+
+    for index, step in enumerate(STEPS):
+        if "tab" in step and step["tab"] not in tab_labels:
+            raise ValueError(
+                f"Spotlight step {index} ({step['title']}): "
+                f"tab '{step['tab']}' is not one of the page tabs {tab_labels}"
+            )
+
+
+def render_spotlight(tab_labels):
     """Mount the SPOTLIGHT button and its walkthrough. Call once per page."""
+
+    check_tabs(tab_labels)
 
     _spotlight(
         key="spotlight",

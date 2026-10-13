@@ -1,12 +1,17 @@
-"""Streamlit frontend: the anomaly detection project told as a short story.
+"""Streamlit frontend: the anomaly detection MLOps pipeline, one tab per component.
 
-Streamlit is only a client. Everything on this page comes from the FastAPI
-service: system status, training data, test images and predictions.
+Built for a short presentation: every tab shows what a component does with one
+diagram, one table and, where it exists, one live element, centered like a
+slide. The tabs follow the order in which the components act on the data.
+
+Streamlit is only a client. Every live number and every image on this page
+comes from the FastAPI service. While the API is offline the page stays
+readable and every live part shows "Live view paused" instead of an error.
+Regression check: python frontend/check_app.py
 """
 
 import os
 import time
-from datetime import datetime
 
 import pandas as pd
 import requests
@@ -21,20 +26,107 @@ from spotlight import render_spotlight
 
 API_URL = os.getenv("API_URL", "http://localhost:8000")
 
+# Browser addresses of the other tools. In GitHub Codespaces every port has its
+# own forwarded address (docker-compose.yml passes CODESPACE_NAME in); anywhere
+# else the published localhost ports are used.
+CODESPACE_NAME = os.getenv("CODESPACE_NAME", "")
+CODESPACE_DOMAIN = os.getenv("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN") or "app.github.dev"
+
+
+def tool_url(port, path=""):
+    """Address of a published port as the presenter's browser reaches it."""
+
+    if CODESPACE_NAME:
+        return f"https://{CODESPACE_NAME}-{port}.{CODESPACE_DOMAIN}{path}"
+
+    return f"http://localhost:{port}{path}"
+
+
 # Same categories as src/training.py (PROJECT_CATEGORIES).
 CATEGORIES = ("bottle", "wood", "pill")
 
-CATEGORY_TEXT = {
-    "bottle": "Glass bottles seen from above. Typical defects: broken glass, contamination.",
-    "wood": "Wooden surfaces. Typical defects: holes, scratches, stains, liquid.",
-    "pill": "Pills. Typical defects: cracks, contamination, faulty imprint, wrong color.",
+CATEGORY_ICON = {"bottle": "🍾", "wood": "🪵", "pill": "💊"}
+
+# The use case as the presentation slides show it:
+# category -> (group, product, camera, inspection signal).
+USE_CASE = {
+    "bottle": ("Bottles", "Manufactured bottle", "Camera before shipping", "Re-inspection"),
+    "pill": ("Tablets", "Finished tablet", "Overhead line camera", "Surface assessment"),
+    "wood": ("Wood", "Machined surface", "Camera before sorting", "Material assessment"),
 }
 
-CATEGORY_ICON = {
-    "bottle": "🍾",
-    "wood": "🪵",
-    "pill": "💊",
+# The story order. frontend/spotlight.py refers to these labels and
+# render_spotlight() rejects any label that is not in this list.
+TAB_LABELS = [
+    "1 · Data flow",
+    "2 · Docker Compose",
+    "3 · PostgreSQL",
+    "4 · Airflow",
+    "5 · FastAPI",
+    "6 · TensorFlow",
+    "7 · MLflow",
+    "8 · Prediction",
+    "9 · Streamlit",
+    "10 · Prometheus",
+    "11 · Holding Quality Evidence",
+    "12 · Grafana",
+]
+
+# Palette of the presentation slides; .streamlit/config.toml sets the same
+# indigo as the primary color.
+INDIGO = "#3D3B8E"
+LAVENDER = "#ECEAF6"
+PEACH = "#FCEBE3"
+MUTED = "#6E6C93"
+LINE = "#B9B6DA"
+
+# One color per loop of the pipeline. The diagrams use the same hex values.
+LOOP_COLOR = {
+    "setup": MUTED,
+    "training": INDIGO,
+    "serving": "#1F8A70",
+    "monitoring": "#C8632D",
 }
+
+# Shared look of every diagram on the page. Streamlit draws all diagram text in
+# the theme font; PAGE_STYLE sets its size to the 14 pt used for the layout here.
+GRAPH_STYLE = """
+    node [shape=box, style="rounded,filled", fillcolor="#ECEAF6", color="#B9B6DA", fontcolor="#26254A", fontname="Helvetica", fontsize=14];
+    edge [fontname="Helvetica", fontsize=14, color="#8F8CC4", fontcolor="#6E6C93"];
+"""
+
+PAGE_STYLE = f"""
+<style>
+.band {{ background: {INDIGO}; color: #ffffff; border-radius: 8px; padding: 18px 24px;
+  display: flex; justify-content: space-between; align-items: center; gap: 16px; }}
+.band-title {{ font-size: 1.7rem; font-weight: 700; line-height: 1.2; }}
+.band-status {{ font-size: .78rem; font-weight: 600; text-align: right; white-space: nowrap; line-height: 1.8; }}
+.band-sub {{ font-size: .95rem; opacity: .85; margin-top: 4px; }}
+[data-testid="stMainBlockContainer"] {{ padding: 4rem 3rem 6rem; max-width: 1300px; margin: 0 auto; }}
+.st-key-story-tabs [role="tablist"] {{ gap: .55rem; justify-content: safe center; }}
+.st-key-story-tabs [role="tab"] p {{ font-size: .8rem; }}
+.section-head {{ text-align: center; }}
+.kicker {{ font-size: .72rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }}
+.headline {{ color: {INDIGO}; font-size: 1.8rem; font-weight: 700; line-height: 1.2; margin: 2px 0 6px; }}
+.takeaway {{ display: flex; justify-content: center; align-items: center; gap: 14px; color: {INDIGO};
+  font-weight: 600; text-align: center; margin: 4px 0; }}
+.takeaway::before, .takeaway::after {{ content: ""; width: 48px; height: 2px; background: #F2C4AE; flex: none; }}
+.name {{ color: {INDIGO}; font-weight: 600; }}
+.card {{ background: {LAVENDER}; border-radius: 10px; padding: 10px 16px; }}
+.card.signal {{ background: {PEACH}; }}
+.card b {{ display: block; color: {INDIGO}; }}
+.card small {{ color: {MUTED}; }}
+.link {{ height: 2px; background: {LINE}; }}
+.thumb {{ width: 64px; height: 64px; border-radius: 50%; background: {LAVENDER};
+  display: flex; align-items: center; justify-content: center; font-size: 1.8rem; }}
+.st-key-use-case img {{ border-radius: 50%; }}
+[data-testid="stGraphVizChart"] svg text {{ font-size: 14px !important; }}
+[data-testid="stMarkdownContainer"] table {{ border-collapse: collapse; font-size: .9rem; }}
+[data-testid="stMarkdownContainer"] th {{ background: {LAVENDER}; color: {INDIGO}; font-weight: 600; }}
+[data-testid="stMarkdownContainer"] th, [data-testid="stMarkdownContainer"] td {{
+  border: 1px solid #E2E0F1; padding: 6px 12px; }}
+</style>
+"""
 
 
 # ==========================================================
@@ -54,6 +146,43 @@ def error_detail(response):
         return response.text
 
 
+def short_error(error):
+    """One readable reason instead of a raw exception dump."""
+
+    if isinstance(error, requests.HTTPError) and error.response is not None:
+        return f"HTTP {error.response.status_code}"
+
+    if isinstance(error, requests.Timeout):
+        return "no answer in time"
+
+    if isinstance(error, requests.ConnectionError):
+        return "connection refused"
+
+    return type(error).__name__
+
+
+# Live reads are cached for a few seconds: Streamlit runs the code of every tab
+# on each interaction, and the page should not flood the API it is measuring.
+LIVE_TTL_SECONDS = 15
+
+
+@st.cache_data(ttl=LIVE_TTL_SECONDS, show_spinner=False)
+def check_system():
+    """Ask the API (at most every 15 s): (api_online, database_online)."""
+
+    try:
+        requests.get(f"{API_URL}/", timeout=3).raise_for_status()
+    except requests.RequestException:
+        return False, False
+
+    try:
+        requests.get(f"{API_URL}/health/db", timeout=3).raise_for_status()
+    except requests.RequestException:
+        return True, False
+
+    return True, True
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def load_examples(category):
     return api_get("/images/examples", category=category).json()["examples"]
@@ -64,12 +193,81 @@ def load_image(image_id):
     return api_get(f"/images/{image_id}/file").content
 
 
+@st.cache_data(ttl=LIVE_TTL_SECONDS, show_spinner=False)
+def fetch_batches():
+    return api_get("/batches/status").json()["batches"]
+
+
+@st.cache_data(ttl=LIVE_TTL_SECONDS, show_spinner=False)
+def fetch_metrics():
+    return api_get("/metrics").text
+
+
+@st.cache_data(ttl=LIVE_TTL_SECONDS, show_spinner=False)
+def ping_api():
+    start = time.perf_counter()
+    api_get("/")
+    return time.perf_counter() - start
+
+
+def image_or_none(image_id):
+    try:
+        return load_image(image_id)
+    except requests.RequestException:
+        return None
+
+
+def good_example_image(category):
+    """A normal test image of the category, or None."""
+
+    try:
+        examples = load_examples(category)
+    except requests.RequestException:
+        return None
+
+    for example in examples:
+        if example["defect_type"] == "good":
+            return image_or_none(example["id"])
+
+    return None
+
+
+def parse_metrics(text):
+    """Prometheus text format -> list of (name, labels, value)."""
+
+    samples = []
+
+    for line in text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+
+        name_part, _, value = line.rpartition(" ")
+        name, _, label_part = name_part.partition("{")
+        labels = {}
+
+        for pair in label_part.rstrip("}").split(","):
+            if "=" in pair:
+                key, _, label_value = pair.partition("=")
+                labels[key] = label_value.strip('"')
+
+        try:
+            samples.append((name, labels, float(value)))
+        except ValueError:
+            continue
+
+    return samples
+
+
 def is_correct(result, true_label):
     return (result["prediction"] == "anomaly") == (true_label != "good")
 
 
-def request_prediction(send_request, source, image_name, category, true_label=None):
-    """Call the API, keep the answer in the session and show errors."""
+def request_prediction(send_request, category, image_name, true_label=None, image_bytes=None):
+    """Call the API, keep the answer in the session and show errors.
+
+    The category is kept with the answer: the verdict is shown only while
+    that category is selected.
+    """
 
     start = time.perf_counter()
 
@@ -77,44 +275,119 @@ def request_prediction(send_request, source, image_name, category, true_label=No
         with st.spinner("The API is checking the image..."):
             response = send_request()
     except requests.RequestException as error:
-        st.error(f"Prediction failed: API not reachable ({error})")
+        st.error(f"Prediction failed: the API did not answer ({short_error(error)}).")
         return
 
     if response.status_code != 200:
         st.error(f"Prediction failed (HTTP {response.status_code}): {error_detail(response)}")
         return
 
-    result = response.json()
-
     st.session_state["last_prediction"] = {
-        "result": result,
+        "result": response.json(),
+        "category": category,
         "image": image_name,
+        "image_bytes": image_bytes,
         "true_label": true_label,
         "seconds": time.perf_counter() - start,
     }
 
-    st.session_state["history"].append(
-        {
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "category": category,
-            "image": image_name,
-            "source": source,
-            "prediction": result["prediction"],
-            "anomaly_score": round(result["anomaly_score"], 6),
-            "threshold": round(result["threshold"], 6),
-            "true_label": true_label or "-",
-            "correct": (
-                "-"
-                if true_label is None
-                else ("yes" if is_correct(result, true_label) else "no")
-            ),
-        }
+
+# ==========================================================
+# SHARED PAGE PARTS
+# ==========================================================
+
+def centered(key=None):
+    """A block whose content-sized parts (diagram, table, metrics, buttons)
+    sit in the middle of the page, as on a slide."""
+
+    return st.container(key=key, horizontal_alignment="center")
+
+
+def section(kicker, headline, loop):
+    """Slide-style opening of a tab: a small colored kicker and one headline."""
+
+    st.html(
+        '<div class="section-head">'
+        f'<div class="kicker" style="color: {LOOP_COLOR[loop]}">{kicker}</div>'
+        f'<div class="headline">{headline}</div>'
+        "</div>"
     )
 
 
-# ==========================================================
-# RESULT CARD
-# ==========================================================
+def takeaway(text):
+    """The one sentence the audience should remember from a tab."""
+
+    st.html(f'<div class="takeaway">{text}</div>')
+
+
+def status_line(label, ok):
+    """One line of the system status in the title band: a green or orange dot."""
+
+    dot = "#7FE0B4" if ok else "#F6B39A"
+    return f'<span style="color: {dot}">●</span> {label}'
+
+
+def live_paused():
+    """Shown instead of a live part while the API is offline."""
+
+    st.info(
+        "Live view paused: the API is offline. "
+        "Start the system with `docker compose up -d` to see live data here.",
+        icon="⏸️",
+    )
+
+
+def open_links(*links):
+    """One-click buttons, side by side in the middle, that open a tool's own UI
+    in a new browser tab."""
+
+    with st.container(horizontal=True, horizontal_alignment="center"):
+        for label, url in links:
+            st.link_button(label, url)
+
+
+def metric_row(*metrics):
+    """Live numbers side by side in the middle of the page: (label, value) pairs."""
+
+    with st.container(horizontal=True, horizontal_alignment="center", gap="large"):
+        for label, value in metrics:
+            st.metric(label, value, width="content")
+
+
+def diagram(dot):
+    """Graphviz diagram at its natural size: the same text size on every tab.
+
+    A diagram wider than the page shrinks to the page width.
+    """
+
+    st.graphviz_chart(dot, width="content")
+
+
+def use_case_rows():
+    """The presentation slide as live rows: product, camera, inspection signal."""
+
+    with st.container(key="use-case"):
+        for category in ("bottle", "pill", "wood"):
+            group, product, camera, signal = USE_CASE[category]
+            thumb, name, camera_column, line, signal_column = st.columns(
+                [0.7, 1.6, 1.8, 0.5, 1.8], vertical_alignment="center"
+            )
+
+            image = good_example_image(category) if api_online else None
+
+            if image is None:
+                thumb.html(f'<div class="thumb">{CATEGORY_ICON[category]}</div>')
+            else:
+                thumb.image(image, width=64)
+
+            name.html(
+                f'<div class="kicker" style="color: {MUTED}">{group}</div>'
+                f'<div class="name">{product}</div>'
+            )
+            camera_column.html(f'<div class="card"><b>{camera}</b><small>Product image</small></div>')
+            line.html('<div class="link"></div>')
+            signal_column.html(f'<div class="card signal"><b>{signal}</b><small>Inspection signal</small></div>')
+
 
 def show_prediction(prediction):
     result = prediction["result"]
@@ -122,53 +395,34 @@ def show_prediction(prediction):
     threshold = result["threshold"]
 
     with st.container(border=True):
-        st.success(
-            f"The API answered in {prediction['seconds']:.2f} s "
-            f"for {prediction['image']} ({result['category']})."
-        )
+        image_column, verdict_column = st.columns([1, 4], vertical_alignment="center")
 
-        if result["prediction"] == "anomaly":
-            st.markdown("## Verdict: :red[ANOMALY]")
-        else:
-            st.markdown("## Verdict: :green[NORMAL]")
+        if prediction.get("image_bytes") is not None:
+            image_column.image(prediction["image_bytes"], caption=prediction["image"], width="stretch")
 
-        score_column, threshold_column, ratio_column = st.columns(3)
-
-        score_column.metric(
-            "Anomaly score",
-            f"{score:.6f}",
-            delta=f"{score - threshold:+.6f} vs threshold",
-            delta_color="inverse",
-        )
-
-        threshold_column.metric("Threshold", f"{threshold:.6f}")
-
-        ratio_column.metric("Score / threshold", f"{score / threshold:.2f} x")
-
-        st.caption(
-            "The image is an anomaly when its score is above the threshold "
-            "(ratio above 1.00 x)."
-        )
-
-        true_label = prediction["true_label"]
-
-        if true_label is not None:
-            truth = "a normal product" if true_label == "good" else f"a defect ({true_label})"
-
-            if is_correct(result, true_label):
-                st.markdown(f"**Ground truth:** {truth} → the model was :green[right].")
+        with verdict_column:
+            if result["prediction"] == "anomaly":
+                st.markdown("## Verdict: :red[ANOMALY]")
             else:
-                st.markdown(f"**Ground truth:** {truth} → the model was :red[wrong].")
+                st.markdown("## Verdict: :green[NORMAL]")
 
-        # Shown when the API serves an MLflow registered model version.
-        if "model_version" in result:
-            st.markdown(
-                f"**Model:** `{result.get('model_name')}` version "
-                f"`{result['model_version']}`"
+            true_label = prediction["true_label"]
+
+            if true_label is not None:
+                truth = "normal product" if true_label == "good" else f"defect ({true_label})"
+
+                if is_correct(result, true_label):
+                    st.markdown(f"**Ground truth:** {truth} → prediction :green[correct].")
+                else:
+                    st.markdown(f"**Ground truth:** {truth} → prediction :red[incorrect].")
+
+            st.metric("Score / threshold", f"{score / threshold:.2f} x")
+
+            st.caption(
+                f"score {score:.6f} · threshold {threshold:.6f} · "
+                f"model {result.get('model_name')} v{result.get('model_version')} (MLflow champion) · "
+                f"response time {prediction['seconds']:.2f} s"
             )
-
-        with st.expander("Full API response"):
-            st.json(result)
 
 
 # ==========================================================
@@ -176,366 +430,520 @@ def show_prediction(prediction):
 # ==========================================================
 
 st.set_page_config(
-    page_title="Anomaly Detection",
+    page_title="Anomaly Detection — MLOps pipeline",
     page_icon="🔍",
     layout="wide",
 )
 
-st.session_state.setdefault("history", [])
+st.html(PAGE_STYLE)
+
 st.session_state.setdefault("last_prediction", None)
 
-# ----------------------------------------------------------
-# Sidebar: live system status
-# ----------------------------------------------------------
-
-with st.sidebar.container(key="spotlight-system-status"):
-    st.header("System status")
-
-    try:
-        api_get("/")
-        st.success("API: connected")
-        api_ok = True
-    except requests.RequestException as error:
-        st.error(f"API: not reachable\n\n{error}")
-        api_ok = False
-
-    if api_ok:
-        try:
-            api_get("/health/db")
-            st.success("Database: connected")
-        except requests.RequestException:
-            st.error("Database: not reachable")
-
-    st.caption(f"API URL: {API_URL}")
-    st.caption("Everything on this page is read from the API.")
+# Asked at most every 15 s. While the API is offline the page stays readable
+# and every live part is paused: no request, no error dump, no dead button.
+api_online, database_online = check_system()
 
 # ----------------------------------------------------------
-# Title
+# Title band with the live system status
 # ----------------------------------------------------------
 
-with st.container(key="spotlight-title"):
-    st.title("🔍 Finding defects without ever seeing one")
-
-    st.markdown(
-        "A neural network learns what a **normal** product looks like. "
-        "Anything it cannot reproduce well is suspicious. "
-        "Follow the story tab by tab, then test the model yourself."
+if not api_online:
+    status = status_line("API offline", False)
+else:
+    status = status_line("API connected", True) + "<br>" + status_line(
+        "Database connected" if database_online else "Database not reachable", database_online
     )
 
-    # Optional guided walkthrough of this page (presentation only).
-    render_spotlight()
+with centered("spotlight-title"):
+    st.html(
+        '<div class="band"><div>'
+        '<div class="band-title">🔍 Finding defects without ever seeing one</div>'
+        '<div class="band-sub">A model learns only normal products; whatever it cannot rebuild is a defect.</div>'
+        "</div>"
+        f'<div class="band-status">{status}</div>'
+        "</div>"
+    )
 
-challenge_tab, data_tab, mlflow_tab, try_tab, decision_tab, system_tab = st.tabs(
-    [
-        "1 · The challenge",
-        "2 · The data",
-        "3 · MLflow",
-        "4 · Try the model",
-        "5 · How it decides",
-        "6 · Behind the scenes",
-    ],
-    key="story-tabs",
-)
-
-# ==========================================================
-# 1 · THE CHALLENGE
-# ==========================================================
-
-with challenge_tab:
-    with st.container(key="spotlight-challenge"):
-        st.header("The challenge")
-
-        st.markdown(
-            """
-In a factory most products are fine. Defects are **rare**, and every defect
-looks different: a crack, a stain, a missing piece. Collecting labeled
-examples of every possible defect is almost impossible.
-
-So the model is trained **only on normal images**. It learns to rebuild them.
-When it sees a defect, the rebuilt image differs from the original —
-that difference is the **anomaly score**.
-"""
+    if not api_online:
+        st.info(
+            "**API: offline**. Live parts are paused. "
+            "Start the system with `docker compose up -d`.",
+            icon="⏸️",
         )
+    elif not database_online:
+        st.error("Database: not reachable. Live parts may fail.")
 
-        columns = st.columns(len(CATEGORIES))
+    # Optional guided walkthrough of this page (presentation only).
+    render_spotlight(TAB_LABELS)
 
-        for column, category in zip(columns, CATEGORIES):
-            with column.container(border=True):
-                st.subheader(f"{CATEGORY_ICON[category]} {category}")
-                st.write(CATEGORY_TEXT[category])
+(
+    flow_tab,
+    compose_tab,
+    postgres_tab,
+    airflow_tab,
+    fastapi_tab,
+    tensorflow_tab,
+    mlflow_tab,
+    prediction_tab,
+    streamlit_tab,
+    prometheus_tab,
+    quality_tab,
+    grafana_tab,
+) = st.tabs(TAB_LABELS, key="story-tabs")
 
-        st.subheader("The idea: a convolutional autoencoder")
+# ==========================================================
+# 1 · DATA FLOW
+# ==========================================================
 
-        st.graphviz_chart(
+with flow_tab, centered():
+    with centered("spotlight-flow"):
+        section("Architecture", "Three loops, one database, one API", "setup")
+
+        diagram(
             """
 digraph {
     rankdir=LR;
-    node [shape=box, style="rounded,filled", fillcolor="#eef3fb", fontname="Helvetica"];
-    image [label="Input image\\n128 x 128"];
-    encoder [label="Encoder\\n(compress)"];
-    code [label="Compact code", shape=ellipse];
-    decoder [label="Decoder\\n(rebuild)"];
-    rebuilt [label="Rebuilt image"];
-    error [label="Reconstruction error\\n= anomaly score", fillcolor="#fdf1dc"];
-    decision [label="score > threshold ?\\nANOMALY : NORMAL", fillcolor="#e6f4ea"];
+    nodesep=0.3;
+    ranksep=0.35;
+"""
+            + GRAPH_STYLE
+            + """
+    files [label="MVTec AD\\nimages", shape=folder, fillcolor="#ffffff"];
+    user [label="User\\n(browser)", shape=oval, fillcolor="#ffffff"];
+
+    subgraph cluster_compose {
+        label="Docker Compose (tab 2)";
+        fontname="Helvetica";
+        fontsize=14;
+        fontcolor="#6E6C93";
+        style="rounded,dashed";
+        color="#B9B6DA";
+
+        postgres [label="PostgreSQL\\n(tab 3)", shape=cylinder, fillcolor="#FCEBE3"];
+        airflow [label="Airflow\\n(tab 4)"];
+        api [label="FastAPI\\n(tab 5)", fillcolor="#FCEBE3"];
+        tensorflow [label="TensorFlow\\n(tab 6)"];
+        mlflow [label="MLflow\\n(tab 7)"];
+        prediction [label="Prediction\\n(tab 8)"];
+        streamlit [label="Streamlit\\n(tab 9)"];
+        prometheus [label="Prometheus\\n(tab 10)"];
+        evidently [label="Evidently\\n(tab 11)"];
+        grafana [label="Grafana\\n(tab 12)", fillcolor="#FCEBE3"];
+    }
+
+    files -> postgres [label="1"];
+
+    airflow -> api [label="2 · 4", color="#3D3B8E", fontcolor="#3D3B8E"];
+    api -> postgres [label="3", color="#3D3B8E", fontcolor="#3D3B8E"];
+    postgres -> tensorflow [label="5", color="#3D3B8E", fontcolor="#3D3B8E"];
+    tensorflow -> mlflow [label="6", color="#3D3B8E", fontcolor="#3D3B8E"];
+
+    user -> streamlit [label="7", color="#1F8A70", fontcolor="#1F8A70"];
+    streamlit -> api [label="7", color="#1F8A70", fontcolor="#1F8A70"];
+    mlflow -> prediction [label="8", color="#1F8A70", fontcolor="#1F8A70"];
+    api -> prediction [label="8", color="#1F8A70", fontcolor="#1F8A70"];
+    prediction -> postgres [label="9", color="#1F8A70", fontcolor="#1F8A70"];
+
+    airflow -> evidently [label="10", color="#C8632D", fontcolor="#C8632D"];
+    postgres -> evidently [label="11", color="#C8632D", fontcolor="#C8632D", dir=both];
+    api -> prometheus [label="12", color="#C8632D", fontcolor="#C8632D"];
+    prometheus -> grafana [label="13", color="#C8632D", fontcolor="#C8632D"];
+    postgres -> grafana [label="13", color="#C8632D", fontcolor="#C8632D"];
+}
+"""
+        )
+
+    st.markdown(
+        f"""
+| Loop | Steps | Flow | Frequency |
+|---|---|---|---|
+| <b style="color: {LOOP_COLOR['training']}">Training</b> | 1 – 6 | image registration → batch release → training → new model version | hourly |
+| <b style="color: {LOOP_COLOR['serving']}">Serving</b> | 7 – 9 | input image → champion score → logged verdict | on request |
+| <b style="color: {LOOP_COLOR['monitoring']}">Monitoring</b> | 10 – 13 | drift checks and API metrics → dashboards | hourly; metrics every 15 s |
+""",
+        unsafe_allow_html=True,
+        width="content",
+    )
+
+    takeaway("Arrow numbers indicate the processing order.")
+
+# ==========================================================
+# 2 · DOCKER COMPOSE
+# ==========================================================
+
+with compose_tab, centered():
+    with centered("spotlight-compose"):
+        section("Infrastructure", "Seven services, one command", "setup")
+
+        st.code("docker compose up -d --build", language="bash", width="content")
+
+        diagram(
+            """
+digraph {
+    rankdir=LR;
+"""
+            + GRAPH_STYLE
+            + """
+    postgres [shape=cylinder, fillcolor="#FCEBE3"];
+    api [fillcolor="#FCEBE3"];
+    postgres -> api [label="healthy"];
+    mlflow -> api [label="healthy"];
+    api -> airflow;
+    api -> prometheus;
+    api -> streamlit;
+    prometheus -> grafana;
+    postgres -> grafana [label="healthy"];
+}
+"""
+        )
+
+    st.markdown(
+        f"""
+| Container | Responsibility | Address |
+|---|---|---|
+| postgres | images, predictions, drift results | `localhost:5432` (database client) |
+| mlflow | experiment runs and model registry | {tool_url(5001)} |
+| api | single entry point | {tool_url(8000, '/docs')} |
+| airflow | hourly scheduling | {tool_url(8081)} |
+| prometheus | API metrics and alerts | {tool_url(9090)} |
+| grafana | dashboards | {tool_url(3000)} |
+| streamlit | presentation layer | {tool_url(8501)} |
+""",
+        width="content",
+    )
+
+    takeaway("Data persists across restarts: database volume and mlflow_data/.")
+
+# ==========================================================
+# 3 · POSTGRESQL
+# ==========================================================
+
+with postgres_tab, centered():
+    with centered("spotlight-postgres"):
+        section("Data", "Fixed cameras capture images at defined inspection points", "setup")
+
+        use_case_rows()
+
+    st.markdown(
+        """
+| Table | Contents |
+|---|---|
+| `images` | every image with category, label, training batch and release status |
+| `prediction_logs` | every prediction with four image features (tab 11) |
+| `drift_reports` | every completed drift check: the quality evidence (tab 11) |
+""",
+        width="content",
+    )
+
+    if not api_online:
+        live_paused()
+    else:
+        try:
+            batches = pd.DataFrame(fetch_batches())
+        except requests.RequestException as error:
+            st.error(f"Could not load the batch status ({short_error(error)}).")
+            batches = None
+
+        if batches is not None and batches.empty:
+            st.info("No images registered yet. Run database/load_data.py first.")
+        elif batches is not None:
+            released = batches[batches["is_available"]]
+            metric_row(
+                (
+                    "Training batches released",
+                    f"{released['batch_id'].nunique()} / {batches['batch_id'].nunique()}",
+                ),
+            )
+
+    takeaway("Fixed test set: every model is evaluated on the same images.")
+
+# ==========================================================
+# 4 · AIRFLOW
+# ==========================================================
+
+with airflow_tab, centered():
+    with centered("spotlight-airflow"):
+        section("Training loop", "Hourly batch release and retraining", "training")
+
+        diagram(
+            """
+digraph {
+    rankdir=LR;
+"""
+            + GRAPH_STYLE
+            + """
+    release [label="release_next_batch", fillcolor="#FCEBE3"];
+    bottle [label="train_bottle"];
+    wood [label="train_wood"];
+    pill [label="train_pill"];
+    skip [label="no new batch\\n→ training skipped", shape=note, fillcolor="#ffffff"];
+    release -> bottle -> wood -> pill [color="#3D3B8E"];
+    release -> skip [style=dashed];
+}
+"""
+        )
+
+    st.markdown(
+        """
+| DAG | Schedule | Tasks (one API call each) |
+|---|---|---|
+| `anomaly_detection_incremental_training` | hourly | release the next training batch; train bottle, wood, pill |
+| `anomaly_detection_drift_monitoring` | hourly | drift check per category (tab 11) |
+""",
+        width="content",
+    )
+
+    if not api_online:
+        live_paused()
+    else:
+        try:
+            waiting = [row for row in fetch_batches() if not row["is_available"]]
+        except requests.RequestException as error:
+            st.error(f"Could not load the batch status ({short_error(error)}).")
+            waiting = None
+
+        if waiting:
+            st.info("Live: the next run releases a new batch and retrains.")
+        elif waiting is not None:
+            st.success("Live: all batches are released; the next run skips training.")
+
+    open_links(("Open Airflow ↗", tool_url(8081)))
+
+    takeaway("Retraining runs only when new data is released.")
+
+# ==========================================================
+# 5 · FASTAPI
+# ==========================================================
+
+with fastapi_tab, centered():
+    with centered("spotlight-fastapi"):
+        section("Interface", "A single API for every caller", "setup")
+
+        diagram(
+            """
+digraph {
+    rankdir=LR;
+"""
+            + GRAPH_STYLE
+            + """
+    api [label="FastAPI", fillcolor="#FCEBE3"];
+    airflow [label="Airflow"];
+    streamlit [label="Streamlit"];
+    prometheus [label="Prometheus"];
+    postgres [label="PostgreSQL", shape=cylinder];
+    model [label="Champion model\\n(MLflow)"];
+    evidently [label="Evidently"];
+    airflow -> api [label="release · train · drift", color="#3D3B8E", fontcolor="#3D3B8E"];
+    streamlit -> api [label="predict", color="#1F8A70", fontcolor="#1F8A70"];
+    prometheus -> api [label="metrics", color="#C8632D", fontcolor="#C8632D"];
+    api -> postgres;
+    api -> model;
+    api -> evidently;
+}
+"""
+        )
+
+    st.markdown(
+        """
+| Endpoint | Caller | Purpose |
+|---|---|---|
+| `POST /batches/release-next` | Airflow | releases the next training batch |
+| `POST /training` | Airflow | trains one category |
+| `POST /predict` | Streamlit | returns a verdict for one image |
+| `POST /monitoring/drift` | Airflow | runs the drift check of one category |
+| `GET /metrics` | Prometheus | exposes request counts and durations |
+""",
+        width="content",
+    )
+
+    if not api_online:
+        live_paused()
+    else:
+        try:
+            st.success(f"Live: `GET /` responded in {ping_api():.3f} s.")
+        except requests.RequestException as error:
+            st.error(f"The API did not respond ({short_error(error)}).")
+
+    open_links(("Open API docs ↗", tool_url(8000, "/docs")))
+
+# ==========================================================
+# 6 · TENSORFLOW
+# ==========================================================
+
+with tensorflow_tab, centered():
+    with centered("spotlight-tensorflow"):
+        section("Training loop", "Autoencoder trained on normal images only", "training")
+
+        diagram(
+            """
+digraph {
+    rankdir=LR;
+"""
+            + GRAPH_STYLE
+            + """
+    image [label="Image\\n128 x 128"];
+    encoder [label="Encoder"];
+    code [label="Code\\n8 x 8", shape=ellipse];
+    decoder [label="Decoder"];
+    rebuilt [label="Reconstruction"];
+    error [label="Reconstruction error\\n= anomaly score", fillcolor="#FCEBE3"];
     image -> encoder -> code -> decoder -> rebuilt;
     image -> error;
-    rebuilt -> error -> decision;
+    rebuilt -> error;
 }
 """
         )
 
-# ==========================================================
-# 2 · THE DATA
-# ==========================================================
+    st.markdown(
+        """
+| | |
+|---|---|
+| Training data | released **normal** images of one category |
+| Model | convolutional autoencoder (TensorFlow) |
+| Anomaly score | reconstruction error of the image |
+| Threshold | 95th percentile of the scores of normal training images |
+| Evaluation | the fixed test set → `test_auroc` |
+""",
+        width="content",
+    )
 
-with data_tab:
-    with st.container(key="spotlight-data"):
-        st.header("The data arrives in batches")
-
-        st.markdown(
-            """
-The images come from the **MVTec AD** dataset. For every category:
-
-* a **fixed test set** (normal and defective images) measures every model the same way;
-* the normal training images are split into **three batches** that "arrive" over time.
-
-Airflow releases one batch per run and retrains the models on everything released so far
-(batch 1 → batches 1 + 2 → batches 1 + 2 + 3).
-The numbers below are read live from the API (`GET /batches/status`).
-"""
-        )
-
-        try:
-            batches = pd.DataFrame(api_get("/batches/status").json()["batches"])
-        except requests.RequestException as error:
-            st.error(f"Could not load the batch status: {error}")
-            batches = pd.DataFrame()
-
-        if batches.empty:
-            st.info("No training data registered yet. Run database/load_data.py first.")
-        else:
-            batches["status"] = batches["is_available"].map(
-                {True: "released", False: "waiting"}
-            )
-
-            released = batches.loc[batches["is_available"], "image_count"].sum()
-            total = batches["image_count"].sum()
-            released_batches = batches.loc[batches["is_available"], "batch_id"].nunique()
-
-            first, second, third = st.columns(3)
-            first.metric("Training images released", f"{released} / {total}")
-            second.metric("Batches released", f"{released_batches} / {batches['batch_id'].nunique()}")
-            third.metric("Categories", batches["category"].nunique())
-
-            chart = batches.pivot_table(
-                index="category",
-                columns="status",
-                values="image_count",
-                aggfunc="sum",
-                fill_value=0,
-            )
-
-            st.bar_chart(chart, x_label="category", y_label="training images")
-
-            st.dataframe(
-                batches[["category", "batch_id", "status", "image_count"]],
-                hide_index=True,
-            )
+    takeaway("No labelled defects are required for training.")
 
 # ==========================================================
-# 3 · MLFLOW
+# 7 · MLFLOW
 # ==========================================================
 
-with mlflow_tab:
-    with st.container(key="spotlight-mlflow"):
-        st.header("Training, recorded by MLflow")
+with mlflow_tab, centered():
+    with centered("spotlight-mlflow"):
+        section("Training loop", "Promotion only on a higher test AUROC", "training")
 
-        st.markdown(
-            """
-The autoencoder learns by **looping over pixels**. In every **epoch** it rebuilds
-each released normal image (128 x 128 pixels, in batches of 16) and compares the
-rebuilt image with the original, pixel by pixel. The difference is one number, the
-**training loss**. The weights then change a little to make it smaller, and the
-loop starts again. MLflow records every step of this loop.
-"""
-        )
-
-        st.graphviz_chart(
+        diagram(
             """
 digraph {
     rankdir=LR;
-    node [shape=box, style="rounded,filled", fillcolor="#eef3fb", fontname="Helvetica"];
-    images [label="Normal images\\n128 x 128, batches of 16"];
-    rebuild [label="Autoencoder\\nrebuilds every pixel"];
-    loss [label="Training loss\\n0.7 MSE + 0.3 (1 - SSIM)", fillcolor="#fdf1dc"];
-    update [label="Adjust the weights"];
-    mlflow [label="MLflow\\ntrain_loss and val_loss", fillcolor="#e6f4ea"];
-    images -> rebuild -> loss -> update;
-    update -> rebuild [label="next epoch"];
-    loss -> mlflow [label="every epoch"];
+"""
+            + GRAPH_STYLE
+            + """
+    run [label="Finished run"];
+    version [label="New version of\\ncae-<category>"];
+    compare [label="test_auroc higher\\nthan the champion?", shape=diamond, fillcolor="#FCEBE3"];
+    promoted [label="champion alias moves", fillcolor="#E3F2EC"];
+    rejected [label="champion retained", fillcolor="#FBE9E7"];
+    run -> version -> compare;
+    compare -> promoted [label="yes"];
+    compare -> rejected [label="no"];
 }
 """
         )
 
-        st.markdown("**Training loss** — how far the rebuilt pixels are from the original:")
-
-        st.latex(r"\text{loss} = 0.7\,\text{MSE} + 0.3\,(1 - \text{SSIM})")
-
-        st.markdown(
-            """
-| Part | What it measures |
+    st.markdown(
+        """
+| Logged per run | Example |
 |---|---|
-| MSE | average squared difference over all pixels |
-| 1 − SSIM | lost structure: edges and textures |
+| parameters | epochs, batch size, learning rate |
+| metrics | `train_loss`, `val_loss`, `test_auroc` |
+| model | a new version of `cae-<category>` |
+| provenance | git commit, dataset version |
+""",
+        width="content",
+    )
 
-This loss is used only to **train** the model. The anomaly score in tab 5 is a
-separate formula that judges a finished image.
-"""
-        )
+    open_links(
+        ("Open MLflow ↗", tool_url(5001)),
+        ("Registered models ↗", tool_url(5001, "/#/models")),
+    )
 
-        st.subheader("One training run")
-
-        st.markdown(
-            """
-| Setting | Value |
-|---|---|
-| Images | released normal images of one category, 128 x 128 |
-| Batch size | 16 images per weight update |
-| Epochs | 30 passes over all training images (default) |
-| Validation | 20 % of the images, never used to update the weights |
-| Learning rate | 0.001, halved when the validation loss stops improving for 4 epochs |
-"""
-        )
-
-        st.subheader("What MLflow keeps for every run")
-
-        st.markdown(
-            """
-| What | Where in MLflow | Content |
-|---|---|---|
-| Settings | parameters | `epochs_requested`, `threshold_percentile`, ... |
-| Learning curve | metrics, one value per epoch | `train_loss`, `val_loss` |
-| Results on the fixed test set | metrics | `test_auroc`, `test_f1`, `test_precision`, `test_recall`, `anomaly_threshold` |
-| Reports | artifacts | `reports/evaluation.json`, `reports/threshold.json` |
-| Training data used | artifact and tag | `dataset/manifest.tsv`, `dataset_version` |
-| The trained model | artifact and Model Registry | `model/`, a new version of `cae-<category>` |
-
-Each run is named after its category and the newest released batch, for example
-`cae-bottle-batch-2`.
-"""
-        )
-
-        st.subheader("Champion selection")
-
-        st.markdown(
-            """
-Every saved run becomes a new version of the registered model `cae-<category>`.
-The new version is compared with the current **champion** on the fixed test set:
-it takes over the alias `champion` only if its `test_auroc` is strictly higher.
-The first model of a category becomes champion directly; on a tie the champion stays.
-
-The API always predicts with `models:/cae-<category>@champion` and loads a newly
-promoted champion by itself. No code change and no restart are needed.
-"""
-        )
-
-        st.subheader("The files behind it")
-
-        st.markdown(
-            """
-| File | Content |
-|---|---|
-| `mlflow_data/mlflow.db` | runs, parameters, metrics and the model registry (SQLite) |
-| `mlflow_data/artifacts/` | models, reports and data manifests of every run |
-
-Open the MLflow UI at http://localhost:5001, experiment `anomaly-detection-cae`.
-"""
-        )
+    takeaway("The API serves models:/cae-&lt;category&gt;@champion without a restart.")
 
 # ==========================================================
-# 4 · TRY THE MODEL
+# 8 · PREDICTION
 # ==========================================================
 
-with try_tab:
-    with st.container(key="spotlight-try-model"):
-        st.header("Try the model")
+with prediction_tab, centered():
+    with centered("spotlight-prediction"):
+        section("Serving loop", "Single-image inspection", "serving")
 
-        st.markdown(
-            "Pick a category and an image. Streamlit sends it to the FastAPI service, "
-            "which runs the trained model and returns the anomaly score."
-        )
+        if not api_online:
+            live_paused()
+        else:
+            category = st.radio(
+                "Category",
+                CATEGORIES,
+                format_func=lambda name: f"{CATEGORY_ICON[name]} {name}",
+                horizontal=True,
+                label_visibility="collapsed",
+            )
 
-        category = st.selectbox(
-            "Category",
-            CATEGORIES,
-            format_func=lambda name: f"{CATEGORY_ICON[name]} {name}",
-        )
-
-        source = st.radio(
-            "Image source",
-            ["Test set example (true label known)", "Upload your own image"],
-            horizontal=True,
-        )
-
-        if source.startswith("Test set"):
             try:
                 examples = load_examples(category)
             except requests.RequestException as error:
-                st.error(f"Could not load test examples: {error}")
-                examples = []
+                st.error(f"Could not load the test examples ({short_error(error)}).")
+                examples = None
+
+            if examples == []:
+                st.info(
+                    f"No test images of {category} are registered yet. "
+                    "Load the dataset with `python database/load_data.py`."
+                )
 
             if examples:
-                st.caption("One image of the fixed test set per defect type:")
-
-                columns = st.columns(len(examples))
+                # At least 8 columns, the test images in the middle ones: the
+                # thumbnails stay small enough to keep the images, the buttons
+                # and the verdict on one screen, and centered with fewer images.
+                side = max(0, (8 - len(examples) + 1) // 2)
+                columns = st.columns(len(examples) + 2 * side)[side : side + len(examples)]
+                chosen = None
 
                 for column, example in zip(columns, examples):
                     with column:
-                        try:
-                            st.image(load_image(example["id"]), width="stretch")
-                        except requests.RequestException:
+                        image = image_or_none(example["id"])
+
+                        if image is None:
                             st.write("(image not available)")
+                        else:
+                            st.image(image, width="stretch")
 
                         label = example["defect_type"]
                         st.markdown(f":green[{label}]" if label == "good" else f":red[{label}]")
 
-                chosen = st.radio(
-                    "Which image should the model check?",
-                    range(len(examples)),
-                    format_func=lambda index: examples[index]["defect_type"],
-                    horizontal=True,
-                )
+                        if st.button(
+                            "Check",
+                            key=f"predict_example_{example['id']}",
+                            type="primary",
+                            width="stretch",
+                        ):
+                            chosen = example
 
-                example = examples[chosen]
-
-                if st.button("Predict with the API", type="primary", key="predict_example"):
+                # Outside the columns: spinner, errors and verdict get the full width.
+                if chosen is not None:
                     request_prediction(
                         lambda: requests.post(
                             f"{API_URL}/predict",
                             json={
-                                "image_path": example["image_path"],
+                                "image_path": chosen["image_path"],
                                 "category": category,
                             },
                             timeout=300,
                         ),
-                        source="test set",
-                        image_name=example["image_path"].split("/")[-1],
                         category=category,
-                        true_label=example["defect_type"],
+                        image_name="/".join(chosen["image_path"].split("/")[-2:]),
+                        true_label=chosen["defect_type"],
+                        image_bytes=image_or_none(chosen["id"]),
                     )
 
-        else:
+    if api_online:
+        # Filled at the end, so that a prediction from either button shows at once,
+        # right under the test images.
+        result_slot = st.container()
+
+        with st.expander("Upload your own image"):
             uploaded_file = st.file_uploader(
                 "Image (PNG or JPG)",
                 type=["png", "jpg", "jpeg"],
             )
 
-            if uploaded_file is not None:
-                st.image(uploaded_file, caption=uploaded_file.name, width=300)
-
             if st.button(
-                "Predict with the API",
+                "Check this image",
                 type="primary",
                 key="predict_upload",
                 disabled=uploaded_file is None,
@@ -553,129 +961,258 @@ with try_tab:
                         },
                         timeout=300,
                     ),
-                    source="upload",
-                    image_name=uploaded_file.name,
                     category=category,
+                    image_name=uploaded_file.name,
+                    image_bytes=uploaded_file.getvalue(),
                 )
 
-        if st.session_state["last_prediction"] is not None:
-            st.subheader("Result")
-            show_prediction(st.session_state["last_prediction"])
+        prediction = st.session_state["last_prediction"]
 
-        history = st.session_state["history"]
+        # Only the verdict of the selected category: after a switch, an older
+        # verdict must not look like the verdict of the new category's images.
+        if prediction is not None and prediction["category"] == category:
+            with result_slot:
+                show_prediction(prediction)
 
-        if history:
-            st.subheader("Your predictions in this session")
-
-            history_frame = pd.DataFrame(history)
-            checked = history_frame[history_frame["correct"] != "-"]
-
-            first, second, third = st.columns(3)
-            first.metric("Predictions", len(history_frame))
-            second.metric("Anomalies found", int((history_frame["prediction"] == "anomaly").sum()))
-
-            if len(checked):
-                third.metric(
-                    "Correct on test examples",
-                    f"{(checked['correct'] == 'yes').sum()} / {len(checked)}",
-                )
-
-            st.dataframe(history_frame.iloc[::-1], hide_index=True)
+    takeaway("Anomaly: score above the threshold (ratio above 1.00 x).")
 
 # ==========================================================
-# 5 · HOW IT DECIDES
+# 9 · STREAMLIT
 # ==========================================================
 
-with decision_tab:
-    with st.container(key="spotlight-decision"):
-        st.header("How the model decides")
+with streamlit_tab, centered():
+    with centered("spotlight-streamlit"):
+        section("Serving loop", "Presentation layer: an API client only", "serving")
 
-        st.markdown("**1. Anomaly score** — how badly the model rebuilt the image:")
-
-        st.latex(
-            r"\text{score} = 0.4\,\text{MSE} + 0.2\,\text{L1} "
-            r"+ 0.2\,(1 - \text{SSIM}) + 0.2\,\text{BlurDiff}"
-        )
-
-        st.markdown(
-            """
-| Part | What it measures |
-|---|---|
-| MSE | squared pixel difference — punishes large errors |
-| L1 | absolute pixel difference — average error |
-| 1 − SSIM | loss of structure (edges, textures) |
-| BlurDiff | difference after smoothing — ignores pixel noise |
-
-**2. Threshold** — computed during training: the 95th percentile of the scores of the
-normal training images. About 5% of normal training images score above it.
-
-**3. Decision** — `score > threshold` → **ANOMALY**, otherwise **NORMAL**.
-
-A higher threshold gives fewer false alarms but more missed defects;
-a lower threshold catches more defects but raises more false alarms.
-"""
-        )
-
-        last = st.session_state["last_prediction"]
-
-        if last is None:
-            st.info("Make a prediction in tab 4 to see these numbers for your own image.")
-        else:
-            result = last["result"]
-
-            st.markdown(
-                f"**Your last image** ({last['image']}): score "
-                f"`{result['anomaly_score']:.6f}` vs threshold `{result['threshold']:.6f}` "
-                f"= **{result['anomaly_score'] / result['threshold']:.2f} x** the threshold "
-                f"→ **{result['prediction'].upper()}**."
-            )
-
-# ==========================================================
-# 6 · BEHIND THE SCENES
-# ==========================================================
-
-with system_tab:
-    with st.container(key="spotlight-system"):
-        st.header("Behind the scenes")
-
-        st.graphviz_chart(
+        diagram(
             """
 digraph {
     rankdir=LR;
-    node [shape=box, style="rounded,filled", fillcolor="#eef3fb", fontname="Helvetica"];
-    browser [label="Browser"];
+"""
+            + GRAPH_STYLE
+            + """
+    browser [label="Browser", shape=oval, fillcolor="#ffffff"];
     streamlit [label="Streamlit\\n(this page)"];
-    api [label="FastAPI", fillcolor="#fdf1dc"];
-    model [label="predict.py\\nTensorFlow model"];
-    postgres [label="PostgreSQL\\nimages + batches", shape=cylinder];
-    airflow [label="Airflow\\nbatches + training"];
-    mlflow [label="MLflow\\nruns + models"];
-    browser -> streamlit -> api;
-    api -> model;
-    api -> postgres;
-    airflow -> api;
-    api -> mlflow [label="training"];
+    api [label="FastAPI", fillcolor="#FCEBE3"];
+    rest [label="PostgreSQL · model · MLflow · Evidently"];
+    browser -> streamlit [label="HTTP"];
+    streamlit -> api [label="HTTP (API_URL)", color="#1F8A70", fontcolor="#1F8A70"];
+    api -> rest;
 }
 """
         )
 
-        st.markdown(
-            """
-Streamlit never loads a model or reads the database itself. It only calls the API:
-
-| Endpoint | Used for |
+    st.markdown(
+        """
+| Part | File |
 |---|---|
-| `GET /` and `GET /health/db` | system status in the sidebar |
-| `GET /batches/status` | tab 2 — released training batches |
-| `GET /images/examples` | tab 4 — one test image per defect type |
-| `GET /images/{id}/file` | tab 4 — the test images themselves |
-| `POST /predict` | tab 4 — prediction for a test set example |
-| `POST /predict/upload` | tab 4 — prediction for an uploaded image |
+| Page | `frontend/app.py` |
+| SPOTLIGHT walkthrough | `frontend/spotlight.py`, `frontend/spotlight/` |
+| Regression check | `frontend/check_app.py` |
+""",
+        width="content",
+    )
 
-Other user interfaces of the project:
+    takeaway("No model or database access in the frontend: UI changes cannot affect predictions.")
 
-* FastAPI documentation: http://localhost:8000/docs
-* MLflow (experiments and models): http://localhost:5001
-* Airflow (batches and training): http://localhost:8081
+# ==========================================================
+# 10 · PROMETHEUS
+# ==========================================================
+
+with prometheus_tab, centered():
+    with centered("spotlight-prometheus"):
+        section("Monitoring loop", "API health and alerting", "monitoring")
+
+        diagram(
+            """
+digraph {
+    rankdir=LR;
+"""
+            + GRAPH_STYLE
+            + """
+    api [label="FastAPI\\n/metrics", fillcolor="#FCEBE3"];
+    prometheus [label="Prometheus"];
+    alerts [label="3 alert rules", shape=note, fillcolor="#ffffff"];
+    grafana [label="Grafana\\n(tab 12)"];
+    api -> prometheus [label="every 15 s", color="#C8632D", fontcolor="#C8632D"];
+    prometheus -> alerts;
+    prometheus -> grafana;
+}
 """
         )
+
+        if not api_online:
+            live_paused()
+        else:
+            try:
+                samples = parse_metrics(fetch_metrics())
+            except requests.RequestException as error:
+                st.error(f"Could not read the metrics ({short_error(error)}).")
+                samples = []
+
+            if samples:
+                counts = [
+                    (labels, value)
+                    for name, labels, value in samples
+                    if name == "http_request_duration_seconds_count"
+                ]
+                seconds = sum(
+                    value for name, _, value in samples if name == "http_request_duration_seconds_sum"
+                )
+                memory = sum(
+                    value for name, _, value in samples if name == "process_resident_memory_bytes"
+                )
+
+                total = sum(value for _, value in counts)
+                errors = sum(value for labels, value in counts if labels.get("status", "").startswith("5"))
+
+                metric_row(
+                    ("Requests (traffic)", f"{total:.0f}"),
+                    ("Server errors (5xx)", f"{errors:.0f}"),
+                    ("Average response", f"{seconds / total:.3f} s" if total else "—"),
+                    ("API memory", f"{memory / 1024 ** 2:.0f} MB"),
+                )
+
+    st.markdown(
+        """
+| Alert | Fires when (for 1 minute) |
+|---|---|
+| `AnomalyApiDown` | Prometheus cannot read `/metrics` |
+| `AnomalyApiHighErrorRate` | more than 5 % of the requests end with HTTP 5xx |
+| `AnomalyApiSlowPredictions` | 95th percentile of `/predict` above 2 s |
+""",
+        width="content",
+    )
+
+    open_links(
+        ("Open Prometheus ↗", tool_url(9090)),
+        ("Alerts ↗", tool_url(9090, "/alerts")),
+        ("Targets ↗", tool_url(9090, "/targets")),
+    )
+
+# ==========================================================
+# 11 · HOLDING QUALITY EVIDENCE
+# ==========================================================
+
+with quality_tab, centered():
+    with centered("spotlight-quality"):
+        section("Monitoring loop", "Evidence that input quality holds", "monitoring")
+
+        diagram(
+            """
+digraph {
+    rankdir=LR;
+"""
+            + GRAPH_STYLE
+            + """
+    logs [label="prediction_logs\\nlast 24 h", shape=cylinder];
+    reference [label="training images", shape=cylinder];
+    evidently [label="Evidently\\nK-S test per feature", fillcolor="#FCEBE3"];
+    reports [label="drift_reports\\n(stored evidence)", shape=cylinder];
+    grafana [label="Grafana\\n(tab 12)"];
+    logs -> evidently [label="current", color="#C8632D", fontcolor="#C8632D"];
+    reference -> evidently [label="reference"];
+    evidently -> reports -> grafana;
+}
+"""
+        )
+
+    st.markdown(
+        """
+| Feature | Measures |
+|---|---|
+| `brightness` | mean gray value |
+| `contrast` | spread of the gray values |
+| `sharpness` | edges (blur lowers it) |
+| `saturation` | color strength |
+""",
+        width="content",
+    )
+
+    if not api_online:
+        live_paused()
+    else:
+        drift_category = st.radio(
+            "Category to check",
+            CATEGORIES,
+            format_func=lambda name: f"{CATEGORY_ICON[name]} {name}",
+            horizontal=True,
+            key="drift_category",
+        )
+
+        if st.button("Run Evidently", key="run_drift", type="primary"):
+            try:
+                with st.spinner("Evidently compares the feature distributions..."):
+                    response = requests.post(
+                        f"{API_URL}/monitoring/drift",
+                        json={"category": drift_category},
+                        timeout=600,
+                    )
+            except requests.RequestException as error:
+                st.error(f"Drift check failed: the API did not respond ({short_error(error)}).")
+                response = None
+
+            if response is not None and response.status_code != 200:
+                st.error(f"Drift check failed (HTTP {response.status_code}): {error_detail(response)}")
+            elif response is not None:
+                report = response.json()
+
+                if report["status"] == "skipped":
+                    st.warning(
+                        f"Skipped and not stored: {report['reason']} "
+                        f"(predictions in the last 24 h: {report['current_rows']})"
+                    )
+                else:
+                    metric_row(
+                        ("Dataset drift", "Yes" if report["dataset_drift"] else "No"),
+                        ("Drifted features", f"{report['drifted_features']} / {report['total_features']}"),
+                        ("Predictions compared", report["current_rows"]),
+                    )
+
+                    st.dataframe(pd.DataFrame(report["features"]), hide_index=True, width="content")
+
+    takeaway("Drift is flagged when at least half of the features drift (p &lt; 0.05); every completed check is stored as evidence.")
+
+# ==========================================================
+# 12 · GRAFANA
+# ==========================================================
+
+with grafana_tab, centered():
+    with centered("spotlight-grafana"):
+        section("Monitoring loop", "Operational overview: two dashboards", "monitoring")
+
+        diagram(
+            """
+digraph {
+    rankdir=LR;
+"""
+            + GRAPH_STYLE
+            + """
+    arrive [label="Data release\\n(Airflow)"];
+    learn [label="Model training\\n(TensorFlow)"];
+    judge [label="Champion serving\\n(MLflow)"];
+    watch [label="Monitoring\\n(Prometheus · Evidently)", fillcolor="#FCEBE3"];
+    arrive -> learn [color="#3D3B8E"];
+    learn -> judge [color="#3D3B8E"];
+    judge -> watch [color="#1F8A70"];
+    watch -> arrive [label="drift → new data", color="#C8632D", fontcolor="#C8632D", constraint=false];
+}
+"""
+        )
+
+    st.markdown(
+        """
+| Dashboard | Data source | Shows |
+|---|---|---|
+| **API / Application Health** | Prometheus (tab 10) | status, requests per second, response times, errors, CPU, memory |
+| **Data Drift (Evidently)** | PostgreSQL (tab 11) | dataset drift, drifted features, per-feature results, history |
+""",
+        width="content",
+    )
+
+    open_links(
+        ("Open Grafana ↗", tool_url(3000)),
+        ("Dashboards ↗", tool_url(3000, "/dashboards")),
+    )
+
+    takeaway("Data release, training, champion serving and monitoring form one closed loop.")

@@ -10,9 +10,14 @@ import psycopg2
 # CONFIG
 # ==========================================================
 
+# Folder with the extracted MVTec AD categories (bottle/, wood/, pill/).
+# Default: the original machine; override with MVTEC_SOURCE_DIR
+# (scripts/demo_setup.sh sets it in GitHub Codespaces).
 SOURCE_DATA_DIR = Path(
-    "/home/ayoub/jupyter/Anomaly_detection_project/"
-    "mvtec_anomaly_detection"
+    os.getenv(
+        "MVTEC_SOURCE_DIR",
+        "/home/ayoub/jupyter/Anomaly_detection_project/mvtec_anomaly_detection",
+    )
 )
 
 DATA_DIR = Path("data")

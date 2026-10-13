@@ -1,0 +1,11 @@
+# Presentation theme: the palette of the presentation slides (indigo,
+# lavender) and text that stays readable on a projector or a shared screen.
+# frontend/app.py uses the same colors. Copied into the image by
+# frontend/Dockerfile.
+[theme]
+base = "light"
+primaryColor = "#3D3B8E"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F1F0F8"
+textColor = "#26254A"
+baseFontSize = 18

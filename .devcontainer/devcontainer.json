@@ -1,0 +1,39 @@
+// Pinned development environment for the demo in GitHub Codespaces.
+//
+// Why it exists (root cause, 2026-10-12): the default Codespaces image
+//   1. lost every Docker image after each codespace stop/start (also the
+//      automatic stop after 30 idle minutes); the orphaned layers filled
+//      the 32 GB disk after the second restart;
+//   2. blocked traffic between containers: iptables-legacy kept
+//      "FORWARD DROP" while Docker wrote its rules to iptables-nft, so the
+//      API could not reach PostgreSQL and exited at startup.
+// The docker-in-docker feature (pinned to 4.1.0) keeps /var/lib/docker and
+// /var/lib/containerd on volumes and selects one iptables backend when the
+// container starts.
+//
+// One-command demo bring-up after the codespace is created:
+//   bash scripts/demo_setup.sh
+{
+  "name": "anomaly-detection-mlops",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:4.1.0": {
+      "moby": true,
+      "dockerDashComposeVersion": "v2"
+    }
+  },
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "16gb",
+    "storage": "32gb"
+  },
+  "forwardPorts": [8501, 8000, 5001, 8081, 3000, 9090],
+  "portsAttributes": {
+    "8501": { "label": "Streamlit (presentation)", "onAutoForward": "notify" },
+    "8000": { "label": "FastAPI", "onAutoForward": "silent" },
+    "5001": { "label": "MLflow", "onAutoForward": "silent" },
+    "8081": { "label": "Airflow", "onAutoForward": "silent" },
+    "3000": { "label": "Grafana", "onAutoForward": "silent" },
+    "9090": { "label": "Prometheus", "onAutoForward": "silent" }
+  }
+}
