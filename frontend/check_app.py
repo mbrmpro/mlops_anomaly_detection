@@ -14,8 +14,16 @@ the API is offline (nothing listens on API_URL) and fails when the page
 * does not say under the title that the API is offline,
 * builds the tool links from localhost although it runs in a codespace,
 * shows a table row without any text (it looks like a rendering error),
-* lets the tab row scroll on a narrow screen instead of wrapping (the last
-  tabs would hide behind an arrow).
+* shows the story tabs in one scrolling row instead of two rows of six (the
+  labels read as one long line and the last tabs hide behind an arrow),
+* lets SPOTLIGHT scroll the selected tab out of view (Streamlit scrolls it
+  back a second later: the page jumps twice),
+* shows the SPOTLIGHT button in a row of its own instead of in the title band
+  (the extra row pushes the tabs down),
+* is not shown at 80 % with every tab filling one screen: the longest tab then
+  needs scrolling and the bottom line moves from tab to tab,
+* has a tab without its bottom line,
+* lets SPOTLIGHT ignore the page zoom (the highlight misses its target).
 
 The live check (presentation readiness) needs the running stack with trained
 champion models and fails when
@@ -52,6 +60,24 @@ CHECK_CODESPACE = "presentation-check"
 
 # Same bound as the AnomalyApiSlowPredictions alert (monitoring/alert_rules.yml).
 SLOW_PREDICTION_SECONDS = 2.0
+
+
+def find_key(node, key):
+    """The element or block with this key, searched depth first, or None."""
+
+    if getattr(node, "key", None) == key:
+        return node
+
+    children = getattr(node, "children", None)
+
+    if isinstance(children, dict):
+        for child in children.values():
+            found = find_key(child, key)
+
+            if found is not None:
+                return found
+
+    return None
 
 
 def offline_problems():
@@ -93,8 +119,32 @@ def offline_problems():
 
     page_styles = " ".join(node.proto.body for node in app.get("html"))
 
-    if "flex-wrap: wrap" not in page_styles:
-        problems.append("the tab row does not wrap: on a narrow screen the last tabs are hidden")
+    if "grid-template-columns: repeat(6" not in page_styles:
+        problems.append("the story tabs are not two rows of six: labels run together, last tabs can hide")
+
+    spotlight_js = (APP.parent / "spotlight" / "spotlight.js").read_text(encoding="utf-8")
+
+    if "Math.min(distance, tab.getBoundingClientRect().top)" not in spotlight_js:
+        problems.append("SPOTLIGHT scrolls the selected tab out of view: the page jumps back a second later")
+
+    title_band = find_key(app.main, "title-band")
+
+    if title_band is None or find_key(title_band, "spotlight") is None:
+        problems.append("the SPOTLIGHT button is not in the title band: its own row pushes the tabs down")
+
+    one_screen_rules = ("zoom: 0.8", "justify-content: space-evenly", "position: absolute; left: 0; right: 0; bottom: 0")
+    missing_rules = [rule for rule in one_screen_rules if rule not in page_styles]
+
+    if missing_rules:
+        problems.append(f"the tabs do not fill one screen each (missing {missing_rules}): scrolling, moving bottom line")
+
+    takeaways = page_styles.count('class="takeaway"')
+
+    if takeaways != 12:
+        problems.append(f"{takeaways} of 12 tabs have a bottom line: the bottom line is not on every tab")
+
+    if "zoomFactor()" not in spotlight_js:
+        problems.append("SPOTLIGHT ignores the page zoom: its highlight misses the target")
 
     return problems
 
