@@ -166,8 +166,12 @@ export default function ({ parentElement, data }) {
     return tabRoot ? Array.from(tabRoot.querySelectorAll('[role="tab"]')) : [];
   }
 
+  function selectedTabElement() {
+    return storyTabs().find(function (item) { return item.getAttribute("aria-selected") === "true"; }) || null;
+  }
+
   function selectedTab() {
-    const tab = storyTabs().find(function (item) { return item.getAttribute("aria-selected") === "true"; });
+    const tab = selectedTabElement();
     return tab ? tab.textContent.trim() : null;
   }
 
@@ -191,14 +195,23 @@ export default function ({ parentElement, data }) {
     return node;
   }
 
+  // app.py zooms the page (CSS zoom on its main block, which holds this component).
+  // getBoundingClientRect() and the viewport size are screen pixels, while the dialog lays
+  // out in zoomed pixels: screen pixels divided by this factor.
+  function zoomFactor() {
+    const width = dialog.offsetWidth;
+    return width ? dialog.getBoundingClientRect().width / width : 1;
+  }
+
   // Positions hole and popover from the target's live geometry: below, above, beside,
   // else over the target's bottom-right corner, always clamped to the viewport. Returns
   // false when the target is not fully in view or the popover had to overlap it.
   function place() {
     frame = 0;
     const node = targetElement();
-    const viewWidth = document.documentElement.clientWidth;
-    const viewHeight = window.innerHeight;
+    const zoom = zoomFactor();
+    const viewWidth = document.documentElement.clientWidth / zoom;
+    const viewHeight = window.innerHeight / zoom;
     hole.hidden = !node;
     missing.hidden = Boolean(node);
     dialog.classList.toggle("spotlight-dim", !node);
@@ -214,7 +227,12 @@ export default function ({ parentElement, data }) {
     }
 
     const rect = node.getBoundingClientRect();
-    const box = {top: rect.top - PAD, left: rect.left - PAD, right: rect.right + PAD, bottom: rect.bottom + PAD};
+    const box = {
+      top: rect.top / zoom - PAD,
+      left: rect.left / zoom - PAD,
+      right: rect.right / zoom + PAD,
+      bottom: rect.bottom / zoom + PAD,
+    };
     hole.style.top = box.top + "px";
     hole.style.left = box.left + "px";
     hole.style.width = box.right - box.left + "px";
@@ -247,11 +265,20 @@ export default function ({ parentElement, data }) {
     }
     popover.style.left = clamp(left, EDGE, viewWidth - width - EDGE) + "px";
     popover.style.top = clamp(top, EDGE, viewHeight - height - EDGE) + "px";
-    return fits && rect.top >= HEADER && rect.bottom <= viewHeight;
+    return fits && rect.top >= HEADER && rect.bottom <= window.innerHeight;
   }
 
   function schedule() {
     if (!frame) frame = window.requestAnimationFrame(place);
+  }
+
+  // Distance that brings the target's top to SCROLL_TOP. After a tab change Streamlit
+  // scrolls the selected tab back into view, so the scroll stops where the selected tab
+  // reaches the top edge: the page moves once instead of jumping back a second later.
+  function scrollDistance(node) {
+    const distance = node.getBoundingClientRect().top - SCROLL_TOP;
+    const tab = selectedTabElement();
+    return tab ? Math.min(distance, tab.getBoundingClientRect().top) : distance;
   }
 
   // Places the popover; when the target is not fully visible, scrolls it to the top of the
@@ -261,7 +288,7 @@ export default function ({ parentElement, data }) {
     const node = targetElement();
     if (node) resizeObserver.observe(node);
     if (!place() && node) {
-      scrollContainer(node).scrollBy(0, node.getBoundingClientRect().top - SCROLL_TOP);
+      scrollContainer(node).scrollBy(0, scrollDistance(node));
     }
   }
 

@@ -102,18 +102,47 @@ GRAPH_STYLE = """
     edge [fontname="Helvetica", fontsize=14, color="#8F8CC4", fontcolor="#6E6C93"];
 """
 
+# One tab is one screen on a 1920 x 1080 display at 100 % browser zoom: the page is shown
+# at 80 % (CSS zoom on the main block only, so Streamlit's header and full-height layout
+# stay unscaled), where the longest tab still fits.
+PAGE_ZOOM = 0.8
+
+# Layout pixels (before the zoom) above the content of a tab (top padding, title band, two
+# tab rows, tab panel padding) and below it (bottom padding). The content of every tab
+# fills the screen height minus both; measured on the rendered page.
+TAB_TOP = 247
+TAB_BOTTOM = 20
+
+# The block that holds the content of one story tab.
+TAB_CONTENT = (
+    '.st-key-story-tabs [data-testid="stTabPanel"] > [data-testid="stVerticalBlock"]'
+    ' > [data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"]'
+)
+
 PAGE_STYLE = f"""
 <style>
-.band {{ background: {INDIGO}; color: #ffffff; border-radius: 8px; padding: 18px 24px;
-  display: flex; justify-content: space-between; align-items: center; gap: 16px; }}
+.st-key-title-band {{ background: {INDIGO}; color: #ffffff; border-radius: 8px; padding: 18px 24px; }}
 .band-title {{ font-size: 1.7rem; font-weight: 700; line-height: 1.2; }}
 .band-status {{ font-size: .78rem; font-weight: 600; text-align: right; white-space: nowrap; line-height: 1.8; }}
 .band-sub {{ font-size: .95rem; opacity: .85; margin-top: 4px; }}
-[data-testid="stMainBlockContainer"] {{ padding: 4rem 3rem 6rem; max-width: 1300px; margin: 0 auto; }}
-/* All twelve tabs stay visible: on a narrow screen the row wraps instead of scrolling. */
-.st-key-story-tabs [role="tablist"] {{ gap: .2rem .55rem; justify-content: center; flex-wrap: wrap;
-  overflow-x: visible; }}
-.st-key-story-tabs [role="tab"] p {{ font-size: .8rem; }}
+[data-testid="stHeader"] {{ background: transparent; }}
+[data-testid="stMainBlockContainer"] {{ zoom: {PAGE_ZOOM}; padding: 2rem 3rem 1rem; max-width: 1300px; margin: 0 auto; }}
+/* Every tab fills the screen below the tabs like a slide: its parts are spread evenly and its
+   takeaway line always sits at the bottom. 100vh inside the zoomed block is 80 % of the screen. */
+{TAB_CONTENT} {{ min-height: calc({100 / PAGE_ZOOM:g}vh - {TAB_TOP + TAB_BOTTOM}px); justify-content: space-evenly;
+  position: relative; padding-bottom: 3.5rem; }}
+{TAB_CONTENT} > [data-testid="stElementContainer"]:has(.takeaway) {{ position: absolute; left: 0; right: 0; bottom: 0; }}
+/* The twelve story tabs as two rows of six separate tabs (1-6 above 7-12): the labels no
+   longer read as one long line, and no tab can hide behind a scroll arrow. */
+.st-key-story-tabs [role="tablist"] {{ display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0; overflow-x: visible; padding: 0 1px 1px 0; }}
+.st-key-story-tabs [role="tab"] {{ justify-content: center; min-width: 0; height: auto; padding: 7px 8px;
+  margin: 0 -1px -1px 0; border: 1px solid #DCD9EE; border-radius: 8px 8px 0 0; background: {LAVENDER}; }}
+.st-key-story-tabs [role="tab"]:hover {{ background: #E2DFF3; }}
+.st-key-story-tabs [role="tab"][aria-selected="true"] {{ position: relative; z-index: 1; background: #ffffff;
+  border-color: {INDIGO}; }}
+.st-key-story-tabs [role="tab"] p {{ font-size: .8rem; text-align: center; white-space: normal; }}
+.st-key-story-tabs [role="tab"][aria-selected="true"] p {{ color: {INDIGO}; font-weight: 600; }}
 .section-head {{ text-align: center; }}
 .kicker {{ font-size: .72rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }}
 .headline {{ color: {INDIGO}; font-size: 1.8rem; font-weight: 700; line-height: 1.2; margin: 2px 0 6px; }}
@@ -477,14 +506,15 @@ else:
     )
 
 with centered("spotlight-title"):
-    st.html(
-        '<div class="band"><div>'
-        '<div class="band-title">🔍 Finding defects without ever seeing one</div>'
-        '<div class="band-sub">A model learns only normal products; whatever it cannot rebuild is a defect.</div>'
-        "</div>"
-        f'<div class="band-status">{status}</div>'
-        "</div>"
-    )
+    # Title, SPOTLIGHT button (optional guided walkthrough, presentation only) and live
+    # status share one band: the button needs no row of its own above the tabs.
+    with st.container(key="title-band", horizontal=True, vertical_alignment="center", gap="medium", wrap=False):
+        st.html(
+            '<div class="band-title">🔍 Finding defects without ever seeing one</div>'
+            '<div class="band-sub">A model learns only normal products; whatever it cannot rebuild is a defect.</div>'
+        )
+        render_spotlight(TAB_LABELS)
+        st.html(f'<div class="band-status">{status}</div>', width="content")
 
     if not api_online:
         st.info(
@@ -494,9 +524,6 @@ with centered("spotlight-title"):
         )
     elif not database_online:
         st.error("Database: not reachable. Live parts may fail.")
-
-    # Optional guided walkthrough of this page (presentation only).
-    render_spotlight(TAB_LABELS)
 
 (
     flow_tab,
@@ -787,6 +814,7 @@ digraph {
             st.error(f"The API did not respond ({short_error(error)}).")
 
     open_links(("Open API docs ↗", tool_url(8000, "/docs")))
+    takeaway("Every caller goes through one API: one place to measure, secure and change.")
 
 # ==========================================================
 # 6 · TENSORFLOW
@@ -1115,6 +1143,7 @@ digraph {
         ("Alerts ↗", tool_url(9090, "/alerts")),
         ("Targets ↗", tool_url(9090, "/targets")),
     )
+    takeaway("Three alert rules watch the API: down, more than 5 % errors, predictions slower than 2 s.")
 
 # ==========================================================
 # 11 · HOLDING QUALITY EVIDENCE

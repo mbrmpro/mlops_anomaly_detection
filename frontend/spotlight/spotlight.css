@@ -1,7 +1,8 @@
 /* SPOTLIGHT presentation. The component renders in a shadow root, so these rules reach
    only the Spotlight's own elements. Colors and fonts follow the Streamlit theme through
    the --st-* variables that Components v2 provides. */
-.spotlight-start { border: 1px solid var(--st-primary-color, #ff4b4b); background: transparent; color: var(--st-primary-color, #ff4b4b); padding: 5px 10px; border-radius: var(--st-button-radius, 6px); font: 600 11px var(--st-code-font, monospace); letter-spacing: .1em; cursor: pointer; }
+/* The start button sits on the indigo title band of app.py: white, text in the theme color. */
+.spotlight-start { border: 1px solid #ffffff; background: #ffffff; color: var(--st-primary-color, #ff4b4b); padding: 5px 10px; border-radius: var(--st-button-radius, 6px); font: 600 11px var(--st-code-font, monospace); letter-spacing: .1em; cursor: pointer; }
 .spotlight-start:hover { background: var(--st-secondary-background-color, #f0f2f6); }
 .spotlight-dialog { inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; overflow: hidden; color: var(--st-text-color, #31333f); background: transparent; font-family: var(--st-font, sans-serif); }
 .spotlight-dialog::backdrop { background: transparent; }
