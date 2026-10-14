@@ -13,7 +13,6 @@ const CODE_FIELDS = ["what", "role", "code", "decision"];
 const PAD = 6;
 const GAP = 12;
 const EDGE = 12;
-const MIN_HEIGHT = 160;
 const MIN_WIDTH = 280;
 // Streamlit's app header overlays the top 60 px of the main area: content under it is not visible.
 const HEADER = 60;
@@ -97,6 +96,14 @@ export default function ({ parentElement, data }) {
   });
 
   const steps = checkRegistry(data);
+
+  // The card numbers follow the tab numbers: the n-th step with a tab belongs to tab n
+  // (spotlight.py checks that the steps follow the tabs one to one). The overview step
+  // has no number.
+  const tabStepCount = steps.filter(function (step) { return step.tab; }).length;
+  function tabNumber(stepIndex) {
+    return steps.slice(0, stepIndex + 1).filter(function (step) { return step.tab; }).length;
+  }
 
   const root = element("div", "spotlight-root");
   const start = element("button", "spotlight-start", "SPOTLIGHT");
@@ -185,8 +192,8 @@ export default function ({ parentElement, data }) {
   }
 
   // Positions hole and popover from the target's live geometry: below, above, beside,
-  // then a shortened (scrolling) popover, always clamped to the viewport. Returns false
-  // when the target is not fully in view or the popover had to shrink or overlap it.
+  // else over the target's bottom-right corner, always clamped to the viewport. Returns
+  // false when the target is not fully in view or the popover had to overlap it.
   function place() {
     frame = 0;
     const node = targetElement();
@@ -231,19 +238,12 @@ export default function ({ parentElement, data }) {
       top = box.top;
       left = spaceRight >= spaceLeft ? box.right + GAP : box.left - GAP - width;
     } else {
+      // No side has room. A shortened popover would hide "Why this design" behind a
+      // scroll bar, so it keeps its full height and covers the bottom-right corner of
+      // the target; the target's top (the tab heading) stays visible.
       fits = false;
-      const room = Math.max(spaceBelow, spaceAbove);
-      if (room >= MIN_HEIGHT) {
-        // No side has room: shrink the popover (its body scrolls) while it stays readable.
-        popover.style.maxHeight = room + "px";
-        height = popover.offsetHeight;
-        top = spaceBelow >= spaceAbove ? box.bottom + GAP : box.top - GAP - height;
-      } else {
-        // The target is taller than the free space: keep its top (the tab heading) visible
-        // and put the popover in the bottom-right corner of the target.
-        top = viewHeight - height - EDGE;
-        left = box.right - width;
-      }
+      top = viewHeight - height - EDGE;
+      left = box.right - width;
     }
     popover.style.left = clamp(left, EDGE, viewWidth - width - EDGE) + "px";
     popover.style.top = clamp(top, EDGE, viewHeight - height - EDGE) + "px";
@@ -276,7 +276,9 @@ export default function ({ parentElement, data }) {
   function show(stepIndex) {
     index = stepIndex;
     const step = steps[index];
-    count.textContent = "STEP " + pad(index + 1) + " / " + pad(steps.length) + " · " + step.keyword;
+    count.textContent = step.tab
+      ? "STEP " + pad(tabNumber(index)) + " / " + pad(tabStepCount) + " · " + step.keyword
+      : step.keyword.toUpperCase();
     title.textContent = step.title;
     fill(what, step.what);
     fill(role, step.role);
@@ -357,13 +359,22 @@ export default function ({ parentElement, data }) {
     restoreFrame = window.requestAnimationFrame(scrollBack);
   }
 
+  // SPOTLIGHT starts at the step of the open tab. On the first tab (the start of the
+  // story) it starts with the overview.
+  function startIndex(tabLabel) {
+    const tabs = storyTabs();
+    if (!tabLabel || (tabs.length && tabs[0].textContent.trim() === tabLabel)) return 0;
+    const stepIndex = steps.findIndex(function (step) { return step.tab === tabLabel; });
+    return stepIndex >= 0 ? stepIndex : 0;
+  }
+
   function onStart() {
     window.cancelAnimationFrame(restoreFrame);
     restoreFrame = 0;
     rememberView();
     dialog.showModal();
     startListening();
-    show(0);
+    show(startIndex(viewBeforeStart.tab));
     next.focus({preventScroll: true});
   }
 

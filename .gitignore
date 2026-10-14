@@ -49,3 +49,6 @@ mlflow_data/
 *.swp
 .pytest_cache/
 .DS_Store
+
+# Presenter guide (PL): local only, never committed
+streamlit_presentation_PL.md
