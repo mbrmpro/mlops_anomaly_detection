@@ -96,7 +96,7 @@ def main():
             mark = "right" if correct else "WRONG"
             print(
                 f"  {mark:5}  {example['defect_type']:16} -> {answer['prediction']:7} "
-                f"({ratio:.2f} x threshold, model v{answer.get('model_version')})"
+                f"({ratio:.3f} x threshold, model v{answer.get('model_version')})"
             )
 
         if failed:
