@@ -367,7 +367,8 @@
     {
       "id": 6,
       "type": "timeseries",
-      "title": "Drift share over time",
+      "title": "Drift share over time (each point: last 24 h)",
+      "description": "Each point re-tests the predictions of the last 24 hours. Hourly points share about 23 of 24 hours, so they are not independent measurements.",
       "gridPos": {
         "x": 12,
         "y": 9,
@@ -418,8 +419,8 @@
     {
       "id": 7,
       "type": "timeseries",
-      "title": "Per-feature drift score over time",
-      "description": "For K-S tests the score is a p-value: lower means stronger drift (threshold 0.05).",
+      "title": "Per-feature drift score over time (each point: last 24 h)",
+      "description": "For K-S tests the score is a p-value: lower means stronger drift (threshold 0.05). Each point re-tests the last 24 hours, so hourly points overlap.",
       "gridPos": {
         "x": 0,
         "y": 18,

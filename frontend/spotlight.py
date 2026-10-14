@@ -92,7 +92,7 @@ STEPS = [
         "title": "TensorFlow",
         "keyword": "model",
         "what": "A convolutional autoencoder trained on normal images only.",
-        "role": "It rebuilds normal images well and defects badly.",
+        "role": "It is meant to rebuild normal images well and defects badly.",
         "code": "`src/training.py`",
         "decision": "No labelled defects are needed for training.",
     },
@@ -104,7 +104,7 @@ STEPS = [
         "what": "Every training run is logged: parameters, metrics and model.",
         "role": "A new version becomes `champion` only with a higher `test_auroc`.",
         "code": "`models:/cae-<category>@champion`",
-        "decision": "A weaker model never reaches the user.",
+        "decision": "One rule on one fixed test set: every switch is traceable.",
     },
     {
         "target": ".st-key-spotlight-prediction",
@@ -144,7 +144,7 @@ STEPS = [
         "what": "A drift check of four image features with Evidently.",
         "role": "Every hour it compares recent inputs with the training images.",
         "code": "`POST /monitoring/drift`",
-        "decision": "Each completed check is stored: quality is proven, not assumed.",
+        "decision": "Each completed check is stored: quality is measured, not assumed.",
     },
     {
         "target": ".st-key-spotlight-grafana",

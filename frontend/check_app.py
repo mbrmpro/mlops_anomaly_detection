@@ -18,6 +18,8 @@ the API is offline (nothing listens on API_URL) and fails when the page
   labels read as one long line and the last tabs hide behind an arrow),
 * lets SPOTLIGHT scroll the selected tab out of view (Streamlit scrolls it
   back a second later: the page jumps twice),
+* shows the score / threshold ratio with fewer than three decimals ("1.00 x"
+  would stand next to NORMAL and next to ANOMALY),
 * shows the SPOTLIGHT button in a row of its own instead of in the title band
   (the extra row pushes the tabs down),
 * is not shown at 80 % with every tab filling one screen: the longest tab then
@@ -142,6 +144,9 @@ def offline_problems():
 
     if takeaways != 12:
         problems.append(f"{takeaways} of 12 tabs have a bottom line: the bottom line is not on every tab")
+
+    if "{score / threshold:.3f} x" not in APP.read_text(encoding="utf-8"):
+        problems.append("the score / threshold ratio has fewer than 3 decimals: '1.00 x' can contradict the verdict")
 
     if "zoomFactor()" not in spotlight_js:
         problems.append("SPOTLIGHT ignores the page zoom: its highlight misses the target")

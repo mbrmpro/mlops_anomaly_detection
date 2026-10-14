@@ -467,7 +467,9 @@ def show_prediction(prediction):
                 else:
                     st.markdown(f"**Ground truth:** {truth} → prediction :red[incorrect].")
 
-            st.metric("Score / threshold", f"{score / threshold:.2f} x")
+            # Three decimals: bottle scores lie within 1 % of the threshold, and with two
+            # decimals "1.00 x" would stand next to NORMAL and next to ANOMALY.
+            st.metric("Score / threshold", f"{score / threshold:.3f} x")
 
             st.caption(
                 f"score {score:.6f} · threshold {threshold:.6f} · "
@@ -1024,7 +1026,7 @@ with prediction_tab, centered():
             with result_slot:
                 show_prediction(prediction)
 
-    takeaway("Anomaly: score above the threshold (ratio above 1.00 x).")
+    takeaway("Anomaly: score above the threshold (ratio above 1.000 x).")
 
 # ==========================================================
 # 9 · STREAMLIT
@@ -1119,12 +1121,16 @@ digraph {
                 errors = sum(value for labels, value in counts if labels.get("status", "").startswith("5"))
 
                 metric_row(
-                    ("Requests (traffic)", f"{total:.0f}"),
+                    ("Requests", f"{total:.0f}"),
                     ("Server errors (5xx)", f"{errors:.0f}"),
                     (
                         "Average prediction time",
                         f"{prediction_seconds / predictions:.3f} s" if predictions else "—",
                     ),
+                )
+                st.caption(
+                    "Counted since the last API start; Grafana (tab 12) shows them per second.",
+                    text_alignment="center",
                 )
 
     st.markdown(
@@ -1151,7 +1157,7 @@ digraph {
 
 with quality_tab, centered():
     with centered("spotlight-quality"):
-        section("Monitoring loop", "Evidence that input quality holds", "monitoring")
+        section("Monitoring loop", "Input drift check, stored as evidence", "monitoring")
 
         diagram(
             """
@@ -1170,6 +1176,12 @@ digraph {
     evidently -> reports -> grafana;
 }
 """
+        )
+
+        st.caption(
+            "In this demo the last 24 h are repeated test images, mostly with defects, "
+            "so the check usually reports drift.",
+            text_alignment="center",
         )
 
     feature_results = None
