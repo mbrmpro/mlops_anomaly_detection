@@ -7,6 +7,7 @@ A drift run compares the predictions of the last WINDOW_HOURS hours
 stored in PostgreSQL and shown by the Grafana "Data Drift" dashboard.
 """
 
+import os
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
@@ -107,6 +108,25 @@ def image_features(image_path):
     }
 
 
+# The features of a training image change only when its file changes. Without
+# this cache every drift run read and decoded all training images of the
+# category again (up to 30 s per run). Key: path, size and modification time,
+# so a replaced file is computed again. One cache per API process.
+REFERENCE_FEATURES = {}
+
+
+def reference_features(image_path):
+    """image_features() of a training image, computed once per file version."""
+
+    stat = os.stat(image_path)
+    key = (image_path, stat.st_size, stat.st_mtime_ns)
+
+    if key not in REFERENCE_FEATURES:
+        REFERENCE_FEATURES[key] = image_features(image_path)
+
+    return REFERENCE_FEATURES[key]
+
+
 # ==========================================================
 # PREDICTION LOG (CURRENT DATA)
 # ==========================================================
@@ -204,7 +224,7 @@ def run_drift_report(engine, category):
         }
 
     reference = pd.DataFrame(
-        [image_features(path) for path in reference_paths]
+        [reference_features(path) for path in reference_paths]
     )
 
     # ------------------------------------------------------

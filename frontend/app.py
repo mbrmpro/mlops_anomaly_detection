@@ -47,12 +47,21 @@ CATEGORIES = ("bottle", "wood", "pill")
 
 CATEGORY_ICON = {"bottle": "🍾", "wood": "🪵", "pill": "💊"}
 
-# The use case as the presentation slides show it:
-# category -> (group, product, camera, inspection signal).
+# The use case of the presentation slides, reduced to the image source
+# (the slides also name the inspection signal): category -> (group, product, camera).
 USE_CASE = {
-    "bottle": ("Bottles", "Manufactured bottle", "Camera before shipping", "Re-inspection"),
-    "pill": ("Tablets", "Finished tablet", "Overhead line camera", "Surface assessment"),
-    "wood": ("Wood", "Machined surface", "Camera before sorting", "Material assessment"),
+    "bottle": ("Bottles", "Manufactured bottle", "Camera before shipping"),
+    "pill": ("Tablets", "Finished tablet", "Overhead line camera"),
+    "wood": ("Wood", "Machined surface", "Camera before sorting"),
+}
+
+# The four image features of the drift check (src/monitoring.py):
+# name -> what it measures.
+DRIFT_FEATURES = {
+    "brightness": "mean gray value",
+    "contrast": "spread of the gray values",
+    "sharpness": "edges (blur lowers it)",
+    "saturation": "color strength",
 }
 
 # The story order. frontend/spotlight.py refers to these labels and
@@ -76,9 +85,7 @@ TAB_LABELS = [
 # indigo as the primary color.
 INDIGO = "#3D3B8E"
 LAVENDER = "#ECEAF6"
-PEACH = "#FCEBE3"
 MUTED = "#6E6C93"
-LINE = "#B9B6DA"
 
 # One color per loop of the pipeline. The diagrams use the same hex values.
 LOOP_COLOR = {
@@ -103,7 +110,9 @@ PAGE_STYLE = f"""
 .band-status {{ font-size: .78rem; font-weight: 600; text-align: right; white-space: nowrap; line-height: 1.8; }}
 .band-sub {{ font-size: .95rem; opacity: .85; margin-top: 4px; }}
 [data-testid="stMainBlockContainer"] {{ padding: 4rem 3rem 6rem; max-width: 1300px; margin: 0 auto; }}
-.st-key-story-tabs [role="tablist"] {{ gap: .55rem; justify-content: safe center; }}
+/* All twelve tabs stay visible: on a narrow screen the row wraps instead of scrolling. */
+.st-key-story-tabs [role="tablist"] {{ gap: .2rem .55rem; justify-content: center; flex-wrap: wrap;
+  overflow-x: visible; }}
 .st-key-story-tabs [role="tab"] p {{ font-size: .8rem; }}
 .section-head {{ text-align: center; }}
 .kicker {{ font-size: .72rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }}
@@ -113,10 +122,7 @@ PAGE_STYLE = f"""
 .takeaway::before, .takeaway::after {{ content: ""; width: 48px; height: 2px; background: #F2C4AE; flex: none; }}
 .name {{ color: {INDIGO}; font-weight: 600; }}
 .card {{ background: {LAVENDER}; border-radius: 10px; padding: 10px 16px; }}
-.card.signal {{ background: {PEACH}; }}
 .card b {{ display: block; color: {INDIGO}; }}
-.card small {{ color: {MUTED}; }}
-.link {{ height: 2px; background: {LINE}; }}
 .thumb {{ width: 64px; height: 64px; border-radius: 50%; background: {LAVENDER};
   display: flex; align-items: center; justify-content: center; font-size: 1.8rem; }}
 .st-key-use-case img {{ border-radius: 50%; }}
@@ -364,14 +370,12 @@ def diagram(dot):
 
 
 def use_case_rows():
-    """The presentation slide as live rows: product, camera, inspection signal."""
+    """The use case as live rows: product image, product, camera."""
 
-    with st.container(key="use-case"):
+    with st.container(key="use-case", width=640):
         for category in ("bottle", "pill", "wood"):
-            group, product, camera, signal = USE_CASE[category]
-            thumb, name, camera_column, line, signal_column = st.columns(
-                [0.7, 1.6, 1.8, 0.5, 1.8], vertical_alignment="center"
-            )
+            group, product, camera = USE_CASE[category]
+            thumb, name, camera_column = st.columns([0.7, 1.6, 1.8], vertical_alignment="center")
 
             image = good_example_image(category) if api_online else None
 
@@ -384,9 +388,27 @@ def use_case_rows():
                 f'<div class="kicker" style="color: {MUTED}">{group}</div>'
                 f'<div class="name">{product}</div>'
             )
-            camera_column.html(f'<div class="card"><b>{camera}</b><small>Product image</small></div>')
-            line.html('<div class="link"></div>')
-            signal_column.html(f'<div class="card signal"><b>{signal}</b><small>Inspection signal</small></div>')
+            camera_column.html(f'<div class="card"><b>{camera}</b></div>')
+
+
+def feature_table(results=None):
+    """The drift features as one table. With the results of a completed check
+    it also shows the p-value and the verdict of each feature."""
+
+    if results is None:
+        rows = [f"| `{name}` | {meaning} |" for name, meaning in DRIFT_FEATURES.items()]
+        return "\n".join(["| Feature | Measures |", "|---|---|", *rows])
+
+    rows = []
+
+    for result in results:
+        p_value = result["drift_score"]
+        shown_p_value = "< 0.001" if p_value < 0.001 else f"{p_value:.3f}"
+        drifted = "yes" if result["drifted"] else "no"
+        meaning = DRIFT_FEATURES.get(result["feature"], "—")
+        rows.append(f"| `{result['feature']}` | {meaning} | {shown_p_value} | {drifted} |")
+
+    return "\n".join(["| Feature | Measures | p-value | Drifted |", "|---|---|---|---|", *rows])
 
 
 def show_prediction(prediction):
@@ -531,41 +553,41 @@ digraph {
         grafana [label="Grafana\\n(tab 12)", fillcolor="#FCEBE3"];
     }
 
-    files -> postgres [label="1"];
+    files -> postgres;
 
-    airflow -> api [label="2 · 4", color="#3D3B8E", fontcolor="#3D3B8E"];
-    api -> postgres [label="3", color="#3D3B8E", fontcolor="#3D3B8E"];
-    postgres -> tensorflow [label="5", color="#3D3B8E", fontcolor="#3D3B8E"];
-    tensorflow -> mlflow [label="6", color="#3D3B8E", fontcolor="#3D3B8E"];
+    airflow -> api [color="#3D3B8E"];
+    api -> postgres [color="#3D3B8E"];
+    postgres -> tensorflow [color="#3D3B8E"];
+    tensorflow -> mlflow [color="#3D3B8E"];
 
-    user -> streamlit [label="7", color="#1F8A70", fontcolor="#1F8A70"];
-    streamlit -> api [label="7", color="#1F8A70", fontcolor="#1F8A70"];
-    mlflow -> prediction [label="8", color="#1F8A70", fontcolor="#1F8A70"];
-    api -> prediction [label="8", color="#1F8A70", fontcolor="#1F8A70"];
-    prediction -> postgres [label="9", color="#1F8A70", fontcolor="#1F8A70"];
+    user -> streamlit [color="#1F8A70"];
+    streamlit -> api [color="#1F8A70"];
+    mlflow -> prediction [color="#1F8A70"];
+    api -> prediction [color="#1F8A70"];
+    prediction -> postgres [color="#1F8A70"];
 
-    airflow -> evidently [label="10", color="#C8632D", fontcolor="#C8632D"];
-    postgres -> evidently [label="11", color="#C8632D", fontcolor="#C8632D", dir=both];
-    api -> prometheus [label="12", color="#C8632D", fontcolor="#C8632D"];
-    prometheus -> grafana [label="13", color="#C8632D", fontcolor="#C8632D"];
-    postgres -> grafana [label="13", color="#C8632D", fontcolor="#C8632D"];
+    airflow -> evidently [color="#C8632D"];
+    postgres -> evidently [color="#C8632D", dir=both];
+    api -> prometheus [color="#C8632D"];
+    prometheus -> grafana [color="#C8632D"];
+    postgres -> grafana [color="#C8632D"];
 }
 """
         )
 
     st.markdown(
         f"""
-| Loop | Steps | Flow | Frequency |
+| Loop | Tabs | Flow | Frequency |
 |---|---|---|---|
-| <b style="color: {LOOP_COLOR['training']}">Training</b> | 1 – 6 | image registration → batch release → training → new model version | hourly |
-| <b style="color: {LOOP_COLOR['serving']}">Serving</b> | 7 – 9 | input image → champion score → logged verdict | on request |
-| <b style="color: {LOOP_COLOR['monitoring']}">Monitoring</b> | 10 – 13 | drift checks and API metrics → dashboards | hourly; metrics every 15 s |
+| <b style="color: {LOOP_COLOR['training']}">Training</b> | 4 · 6 · 7 | image registration → batch release → training → new model version | hourly |
+| <b style="color: {LOOP_COLOR['serving']}">Serving</b> | 8 · 9 | input image → champion score → logged verdict | on request |
+| <b style="color: {LOOP_COLOR['monitoring']}">Monitoring</b> | 10 · 11 · 12 | drift checks and API metrics → dashboards | hourly; metrics every 15 s |
 """,
         unsafe_allow_html=True,
         width="content",
     )
 
-    takeaway("Arrow numbers indicate the processing order.")
+    takeaway("Colors mark the three loops; tab numbers are in brackets.")
 
 # ==========================================================
 # 2 · DOCKER COMPOSE
@@ -598,16 +620,16 @@ digraph {
         )
 
     st.markdown(
-        f"""
-| Container | Responsibility | Address |
-|---|---|---|
-| postgres | images, predictions, drift results | `localhost:5432` (database client) |
-| mlflow | experiment runs and model registry | {tool_url(5001)} |
-| api | single entry point | {tool_url(8000, '/docs')} |
-| airflow | hourly scheduling | {tool_url(8081)} |
-| prometheus | API metrics and alerts | {tool_url(9090)} |
-| grafana | dashboards | {tool_url(3000)} |
-| streamlit | presentation layer | {tool_url(8501)} |
+        """
+| Container | Responsibility |
+|---|---|
+| postgres | images, predictions, drift results |
+| mlflow | experiment runs and model registry |
+| api | single entry point |
+| airflow | hourly scheduling |
+| prometheus | API metrics and alerts |
+| grafana | dashboards |
+| streamlit | presentation layer |
 """,
         width="content",
     )
@@ -620,7 +642,7 @@ digraph {
 
 with postgres_tab, centered():
     with centered("spotlight-postgres"):
-        section("Data", "Fixed cameras capture images at defined inspection points", "setup")
+        section("Data", "One database: images, predictions, quality evidence", "setup")
 
         use_case_rows()
 
@@ -796,7 +818,7 @@ digraph {
 
     st.markdown(
         """
-| | |
+| Aspect | Choice |
 |---|---|
 | Training data | released **normal** images of one category |
 | Model | convolutional autoencoder (TensorFlow) |
@@ -1056,11 +1078,13 @@ digraph {
                     for name, labels, value in samples
                     if name == "http_request_duration_seconds_count"
                 ]
-                seconds = sum(
-                    value for name, _, value in samples if name == "http_request_duration_seconds_sum"
-                )
-                memory = sum(
-                    value for name, _, value in samples if name == "process_resident_memory_bytes"
+                # Prediction time only: a training call takes minutes by design, and
+                # an average over all routes would look like a slow API.
+                predictions = sum(value for labels, value in counts if labels.get("route") == "/predict")
+                prediction_seconds = sum(
+                    value
+                    for name, labels, value in samples
+                    if name == "http_request_duration_seconds_sum" and labels.get("route") == "/predict"
                 )
 
                 total = sum(value for _, value in counts)
@@ -1069,8 +1093,10 @@ digraph {
                 metric_row(
                     ("Requests (traffic)", f"{total:.0f}"),
                     ("Server errors (5xx)", f"{errors:.0f}"),
-                    ("Average response", f"{seconds / total:.3f} s" if total else "—"),
-                    ("API memory", f"{memory / 1024 ** 2:.0f} MB"),
+                    (
+                        "Average prediction time",
+                        f"{prediction_seconds / predictions:.3f} s" if predictions else "—",
+                    ),
                 )
 
     st.markdown(
@@ -1117,17 +1143,7 @@ digraph {
 """
         )
 
-    st.markdown(
-        """
-| Feature | Measures |
-|---|---|
-| `brightness` | mean gray value |
-| `contrast` | spread of the gray values |
-| `sharpness` | edges (blur lowers it) |
-| `saturation` | color strength |
-""",
-        width="content",
-    )
+    feature_results = None
 
     if not api_online:
         live_paused()
@@ -1142,7 +1158,9 @@ digraph {
 
         if st.button("Run Evidently", key="run_drift", type="primary"):
             try:
-                with st.spinner("Evidently compares the feature distributions..."):
+                # The first check of a category after an API start reads every training
+                # image (up to 30 s); later checks reuse the cached image features.
+                with st.spinner("Evidently compares the feature distributions (first check after a restart: up to 30 s)..."):
                     response = requests.post(
                         f"{API_URL}/monitoring/drift",
                         json={"category": drift_category},
@@ -1169,7 +1187,9 @@ digraph {
                         ("Predictions compared", report["current_rows"]),
                     )
 
-                    st.dataframe(pd.DataFrame(report["features"]), hide_index=True, width="content")
+                    feature_results = report["features"]
+
+    st.markdown(feature_table(feature_results), width="content")
 
     takeaway("Drift is flagged when at least half of the features drift (p &lt; 0.05); every completed check is stored as evidence.")
 
@@ -1195,7 +1215,7 @@ digraph {
     arrive -> learn [color="#3D3B8E"];
     learn -> judge [color="#3D3B8E"];
     judge -> watch [color="#1F8A70"];
-    watch -> arrive [label="drift → new data", color="#C8632D", fontcolor="#C8632D", constraint=false];
+    watch -> arrive [label="drift → decision on new data", color="#C8632D", fontcolor="#C8632D", style=dashed, constraint=false];
 }
 """
         )
@@ -1215,4 +1235,4 @@ digraph {
         ("Dashboards ↗", tool_url(3000, "/dashboards")),
     )
 
-    takeaway("Data release, training, champion serving and monitoring form one closed loop.")
+    takeaway("Monitoring shows when new data is needed; retraining follows the next data release.")

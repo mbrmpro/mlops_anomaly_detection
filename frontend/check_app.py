@@ -12,25 +12,34 @@ the API is offline (nothing listens on API_URL) and fails when the page
 * shows a red error box instead of the "Live view paused" note,
 * does not render all twelve story tabs,
 * does not say under the title that the API is offline,
-* builds the tool links from localhost although it runs in a codespace.
+* builds the tool links from localhost although it runs in a codespace,
+* shows a table row without any text (it looks like a rendering error),
+* lets the tab row scroll on a narrow screen instead of wrapping (the last
+  tabs would hide behind an arrow).
 
 The live check (presentation readiness) needs the running stack with trained
 champion models and fails when
 
 * the Prediction tab offers no "Check" button under the test images,
 * one click on "Check" does not show a verdict,
-* that verdict stays visible after switching to another category.
+* that verdict stays visible after switching to another category,
+* the Prometheus tab shows no "Average prediction time" or shows it above
+  2 s (the bound of the AnomalyApiSlowPredictions alert).
 
 Background: the first version showed raw connection errors when the API was
 not running; the page must stay readable and calm without the API. The
 presentation version opens every tool through its forwarded Codespaces
-address and judges a test image with one click.
+address and judges a test image with one click. The Prometheus tab once
+showed an average of 30 s, because it averaged every route and a training
+call takes minutes; it now averages /predict only.
 """
 
 import os
+import re
 import sys
 from pathlib import Path
 
+import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 APP = Path(__file__).resolve().parent / "app.py"
@@ -40,6 +49,9 @@ OFFLINE_API_URL = "http://127.0.0.1:9"
 
 # A made-up codespace: the tool links must be built from it.
 CHECK_CODESPACE = "presentation-check"
+
+# Same bound as the AnomalyApiSlowPredictions alert (monitoring/alert_rules.yml).
+SLOW_PREDICTION_SECONDS = 2.0
 
 
 def offline_problems():
@@ -64,9 +76,25 @@ def offline_problems():
         problems.append("the page does not say that the API is offline")
 
     expected_link = f"https://{CHECK_CODESPACE}-8081.app.github.dev"
+    link_urls = [button.proto.url for button in app.get("link_button")]
 
-    if not any(expected_link in markdown.value for markdown in app.markdown):
+    if expected_link not in link_urls:
         problems.append(f"tool links are not built for the codespace (missing {expected_link})")
+
+    # A table line made of "|" and spaces only: an empty header or row.
+    empty_rows = [
+        markdown.value
+        for markdown in app.markdown
+        if re.search(r"^\|(\s*\|)+\s*$", markdown.value, re.MULTILINE)
+    ]
+
+    if empty_rows:
+        problems.append(f"{len(empty_rows)} table(s) with an empty row, first: {empty_rows[0][:60]!r}")
+
+    page_styles = " ".join(node.proto.body for node in app.get("html"))
+
+    if "flex-wrap: wrap" not in page_styles:
+        problems.append("the tab row does not wrap: on a narrow screen the last tabs are hidden")
 
     return problems
 
@@ -106,6 +134,26 @@ def live_problems(api_url):
 
     if any("Verdict:" in markdown.value for markdown in app.markdown):
         problems.append(f"the old verdict is still shown after switching to {other_category}")
+
+    # The page keeps /metrics for 15 s: clear it so the average counts the
+    # click above and is read from the API again.
+    st.cache_data.clear()
+    app.run()
+
+    average = next(
+        (metric.value for metric in app.metric if metric.label == "Average prediction time"),
+        None,
+    )
+
+    if average is None:
+        problems.append("the Prometheus tab shows no 'Average prediction time'")
+    elif not average.endswith(" s"):
+        problems.append(f"no /predict request counted after 'Check' (Average prediction time: {average})")
+    elif float(average.removesuffix(" s")) > SLOW_PREDICTION_SECONDS:
+        problems.append(
+            f"Average prediction time {average} is above {SLOW_PREDICTION_SECONDS:.0f} s: "
+            "run bash scripts/demo_setup.sh to warm the model, then check again"
+        )
 
     return problems
 
