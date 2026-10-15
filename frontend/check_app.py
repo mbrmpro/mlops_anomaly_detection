@@ -178,7 +178,7 @@ def live_problems(api_url):
     if app.error:
         problems.append(f"error box after 'Check': {app.error[0].value}")
 
-    if not any("Verdict:" in markdown.value for markdown in app.markdown):
+    if not any("Prediction:" in markdown.value for markdown in app.markdown):
         problems.append("no verdict after one click on 'Check'")
 
     # A verdict belongs to the category it was made for: after a switch it
@@ -187,7 +187,7 @@ def live_problems(api_url):
     other_category = next(option for option in ("bottle", "pill", "wood") if option != category_radio.value)
     category_radio.set_value(other_category).run()
 
-    if any("Verdict:" in markdown.value for markdown in app.markdown):
+    if any("Prediction:" in markdown.value for markdown in app.markdown):
         problems.append(f"the old verdict is still shown after switching to {other_category}")
 
     # The page keeps /metrics for 15 s: clear it so the average counts the

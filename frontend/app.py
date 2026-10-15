@@ -51,7 +51,7 @@ CATEGORY_ICON = {"bottle": "🍾", "wood": "🪵", "pill": "💊"}
 # (the slides also name the inspection signal): category -> (group, product, camera).
 USE_CASE = {
     "bottle": ("Bottles", "Manufactured bottle", "Camera before shipping"),
-    "pill": ("Tablets", "Finished tablet", "Overhead line camera"),
+    "pill": ("Pills", "Finished pill", "Overhead line camera"),
     "wood": ("Wood", "Machined surface", "Camera before sorting"),
 }
 
@@ -453,9 +453,9 @@ def show_prediction(prediction):
 
         with verdict_column:
             if result["prediction"] == "anomaly":
-                st.markdown("## Verdict: :red[ANOMALY]")
+                st.markdown("## Prediction: :red[ANOMALY]")
             else:
-                st.markdown("## Verdict: :green[NORMAL]")
+                st.markdown("## Prediction: :green[NORMAL]")
 
             true_label = prediction["true_label"]
 
@@ -512,8 +512,8 @@ with centered("spotlight-title"):
     # status share one band: the button needs no row of its own above the tabs.
     with st.container(key="title-band", horizontal=True, vertical_alignment="center", gap="medium", wrap=False):
         st.html(
-            '<div class="band-title">🔍 Finding defects without ever seeing one</div>'
-            '<div class="band-sub">A model learns only normal products; whatever it cannot rebuild is a defect.</div>'
+            '<div class="band-title">🔍 Visual anomaly detection with an MLOps pipeline</div>'
+            '<div class="band-sub">Trained on normal inspection images, the model flags anomalies using reconstruction error.</div>'
         )
         render_spotlight(TAB_LABELS)
         st.html(f'<div class="band-status">{status}</div>', width="content")
@@ -595,7 +595,7 @@ digraph {
     api -> prediction [color="#1F8A70"];
     prediction -> postgres [color="#1F8A70"];
 
-    airflow -> evidently [color="#C8632D"];
+    api -> evidently [color="#C8632D"];
     postgres -> evidently [color="#C8632D", dir=both];
     api -> prometheus [color="#C8632D"];
     prometheus -> grafana [color="#C8632D"];
@@ -609,7 +609,7 @@ digraph {
 | Loop | Tabs | Flow | Frequency |
 |---|---|---|---|
 | <b style="color: {LOOP_COLOR['training']}">Training</b> | 4 · 6 · 7 | image registration → batch release → training → new model version | hourly |
-| <b style="color: {LOOP_COLOR['serving']}">Serving</b> | 8 · 9 | input image → champion score → logged verdict | on request |
+| <b style="color: {LOOP_COLOR['serving']}">Serving</b> | 8 · 9 | input image → champion score → logged prediction | on request |
 | <b style="color: {LOOP_COLOR['monitoring']}">Monitoring</b> | 10 · 11 · 12 | drift checks and API metrics → dashboards | hourly; metrics every 15 s |
 """,
         unsafe_allow_html=True,
@@ -671,7 +671,7 @@ digraph {
 
 with postgres_tab, centered():
     with centered("spotlight-postgres"):
-        section("Data", "One database: images, predictions, quality evidence", "setup")
+        section("Data", "One database: image metadata, predictions and quality evidence", "setup")
 
         use_case_rows()
 
@@ -785,7 +785,7 @@ digraph {
     model [label="Champion model\\n(MLflow)"];
     evidently [label="Evidently"];
     airflow -> api [label="release · train · drift", color="#3D3B8E", fontcolor="#3D3B8E"];
-    streamlit -> api [label="predict", color="#1F8A70", fontcolor="#1F8A70"];
+    streamlit -> api [label="predict · drift", color="#1F8A70", fontcolor="#1F8A70"];
     prometheus -> api [label="metrics", color="#C8632D", fontcolor="#C8632D"];
     api -> postgres;
     api -> model;
@@ -800,8 +800,8 @@ digraph {
 |---|---|---|
 | `POST /batches/release-next` | Airflow | releases the next training batch |
 | `POST /training` | Airflow | trains one category |
-| `POST /predict` | Streamlit | returns a verdict for one image |
-| `POST /monitoring/drift` | Airflow | runs the drift check of one category |
+| `POST /predict` | Streamlit | returns a prediction for one image |
+| `POST /monitoring/drift` | Airflow, Streamlit | runs the drift check of one category |
 | `GET /metrics` | Prometheus | exposes request counts and durations |
 """,
         width="content",
@@ -816,7 +816,7 @@ digraph {
             st.error(f"The API did not respond ({short_error(error)}).")
 
     open_links(("Open API docs ↗", tool_url(8000, "/docs")))
-    takeaway("Every caller goes through one API: one place to measure, secure and change.")
+    takeaway("Clients use the API to access training, prediction and monitoring.")
 
 # ==========================================================
 # 6 · TENSORFLOW
@@ -859,7 +859,7 @@ digraph {
         width="content",
     )
 
-    takeaway("No labelled defects are required for training.")
+    takeaway("Training uses normal images; labeled defects are used for evaluation.")
 
 # ==========================================================
 # 7 · MLFLOW
@@ -867,7 +867,7 @@ digraph {
 
 with mlflow_tab, centered():
     with centered("spotlight-mlflow"):
-        section("Training loop", "Promotion only on a higher test AUROC", "training")
+        section("Training loop", "Promotion: no champion yet, or a higher test AUROC", "training")
 
         diagram(
             """
@@ -878,7 +878,7 @@ digraph {
             + """
     run [label="Finished run"];
     version [label="New version of\\ncae-<category>"];
-    compare [label="test_auroc higher\\nthan the champion?", shape=diamond, fillcolor="#FCEBE3"];
+    compare [label="no champion yet, or\\nhigher test_auroc?", shape=diamond, fillcolor="#FCEBE3"];
     promoted [label="champion alias moves", fillcolor="#E3F2EC"];
     rejected [label="champion retained", fillcolor="#FBE9E7"];
     run -> version -> compare;
@@ -1065,7 +1065,7 @@ digraph {
         width="content",
     )
 
-    takeaway("No model or database access in the frontend: UI changes cannot affect predictions.")
+    takeaway("The frontend displays results; prediction logic runs in the backend.")
 
 # ==========================================================
 # 10 · PROMETHEUS
@@ -1232,7 +1232,7 @@ digraph {
 
     st.markdown(feature_table(feature_results), width="content")
 
-    takeaway("Drift is flagged when at least half of the features drift (p &lt; 0.05); every completed check is stored as evidence.")
+    takeaway("Dataset drift: at least 2 of 4 features with p &lt; 0.05; each completed check is stored as evidence.")
 
 # ==========================================================
 # 12 · GRAFANA
@@ -1276,4 +1276,4 @@ digraph {
         ("Dashboards ↗", tool_url(3000, "/dashboards")),
     )
 
-    takeaway("Monitoring shows when new data is needed; retraining follows the next data release.")
+    takeaway("Monitoring supports investigation; scheduled retraining follows a new batch release.")

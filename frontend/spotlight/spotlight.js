@@ -132,10 +132,10 @@ export default function ({ parentElement, data }) {
   const code = element("dd", "spotlight-code");
   const decision = element("dd", "spotlight-decision");
   list.append(
-    element("dt", "", "What"), what,
-    element("dt", "", "Role"), role,
-    element("dt", "", "Code"), code,
-    element("dt", "", "Why this design"), decision
+    element("dt", "", "Purpose"), what,
+    element("dt", "", "In this project"), role,
+    element("dt", "", "Source"), code,
+    element("dt", "", "What to notice"), decision
   );
   const missing = element("p", "spotlight-missing", MISSING_TEXT);
   missing.hidden = true;
@@ -203,8 +203,9 @@ export default function ({ parentElement, data }) {
     return width ? dialog.getBoundingClientRect().width / width : 1;
   }
 
-  // Positions hole and popover from the target's live geometry: below, above, beside,
-  // else over the target's bottom-right corner, always clamped to the viewport. Returns
+  // Positions hole and popover from the target's live geometry: beside at full width,
+  // below, above, beside at reduced width, else over the target's bottom-right corner,
+  // always clamped to the viewport. Returns
   // false when the target is not fully in view or the popover had to overlap it.
   function place() {
     frame = 0;
@@ -245,7 +246,12 @@ export default function ({ parentElement, data }) {
     let top = box.bottom + GAP;
     let left = box.left;
     let fits = true;
-    if (height <= spaceBelow) {
+    if (Math.max(spaceRight, spaceLeft) >= width) {
+      // A full-width popover beside the target covers no page content: the tables
+      // under the target stay readable while the walkthrough is open.
+      top = box.top;
+      left = spaceRight >= spaceLeft ? box.right + GAP : box.left - GAP - width;
+    } else if (height <= spaceBelow) {
       top = box.bottom + GAP;
     } else if (height <= spaceAbove) {
       top = box.top - GAP - height;
@@ -256,7 +262,7 @@ export default function ({ parentElement, data }) {
       top = box.top;
       left = spaceRight >= spaceLeft ? box.right + GAP : box.left - GAP - width;
     } else {
-      // No side has room. A shortened popover would hide "Why this design" behind a
+      // No side has room. A shortened popover would hide "What to notice" behind a
       // scroll bar, so it keeps its full height and covers the bottom-right corner of
       // the target; the target's top (the tab heading) stays visible.
       fits = false;
