@@ -156,9 +156,7 @@ export default function ({ parentElement, data }) {
   let index = 0;
   let frame = 0;
   let waitFrame = 0;
-  let restoreFrame = 0;
   let listening = false;
-  let viewBeforeStart = null;
   const resizeObserver = new ResizeObserver(schedule);
 
   function storyTabs() {
@@ -364,34 +362,6 @@ export default function ({ parentElement, data }) {
     resizeObserver.disconnect();
   }
 
-  // The walkthrough selects tabs and scrolls targets into view. Closing it gives back the
-  // tab and the scroll position the reader had when SPOTLIGHT was pressed.
-  function rememberView() {
-    const scroller = scrollContainer(root.getRootNode().host || root);
-    viewBeforeStart = {tab: selectedTab(), scroller: scroller, scrollTop: scroller.scrollTop};
-  }
-
-  function restoreView() {
-    const view = viewBeforeStart;
-    viewBeforeStart = null;
-    if (!view) return;
-    if (view.tab && selectedTab() !== view.tab) selectTab(view.tab);
-    // The restored tab lays out its content in the next frames: scroll back once the page
-    // is tall enough again.
-    let waited = 0;
-    function scrollBack() {
-      const range = view.scroller.scrollHeight - view.scroller.clientHeight;
-      if (range >= view.scrollTop || waited >= MAX_WAIT_FRAMES) {
-        restoreFrame = 0;
-        view.scroller.scrollTop = view.scrollTop;
-      } else {
-        waited += 1;
-        restoreFrame = window.requestAnimationFrame(scrollBack);
-      }
-    }
-    restoreFrame = window.requestAnimationFrame(scrollBack);
-  }
-
   // SPOTLIGHT starts at the step of the open tab. On the first tab (the start of the
   // story) it starts with the overview.
   function startIndex(tabLabel) {
@@ -402,19 +372,17 @@ export default function ({ parentElement, data }) {
   }
 
   function onStart() {
-    window.cancelAnimationFrame(restoreFrame);
-    restoreFrame = 0;
-    rememberView();
+    const openTab = selectedTab();
     dialog.showModal();
     startListening();
-    show(startIndex(viewBeforeStart.tab));
+    show(startIndex(openTab));
     next.focus({preventScroll: true});
   }
 
   // Esc, ×, Finish and the last Next all end in dialog.close(), which fires "close".
+  // The page stays where the last card was: its tab remains open, nothing switches back.
   function onClose() {
     stopListening();
-    restoreView();
     start.focus({preventScroll: true});
   }
 
@@ -429,18 +397,11 @@ export default function ({ parentElement, data }) {
   dialog.addEventListener("close", onClose);
 
   // Cleanup for component unmount and for a repeated render: no listener, frame or
-  // observer survives, and a walkthrough that is still open gives back the original tab.
+  // observer survives; a walkthrough that is still open closes on the tab it shows.
   function cleanup() {
     dialog.removeEventListener("close", onClose);
     stopListening();
-    if (dialog.open) {
-      const view = viewBeforeStart;
-      viewBeforeStart = null;
-      if (view && view.tab && selectedTab() !== view.tab) selectTab(view.tab);
-      dialog.close();
-    }
-    window.cancelAnimationFrame(restoreFrame);
-    restoreFrame = 0;
+    if (dialog.open) dialog.close();
     root.removeEventListener(CLEANUP_EVENT, cleanup);
     root.remove();
   }

@@ -25,7 +25,9 @@ the API is offline (nothing listens on API_URL) and fails when the page
 * is not shown at 80 % with every tab filling one screen: the longest tab then
   needs scrolling and the bottom line moves from tab to tab,
 * has a tab without its bottom line,
-* lets SPOTLIGHT ignore the page zoom (the highlight misses its target).
+* lets SPOTLIGHT ignore the page zoom (the highlight misses its target),
+* switches back to the starting tab when SPOTLIGHT closes (the reader loses
+  the tab the last card showed).
 
 The live check (presentation readiness) needs the running stack with trained
 champion models and fails when
@@ -150,6 +152,9 @@ def offline_problems():
 
     if "zoomFactor()" not in spotlight_js:
         problems.append("SPOTLIGHT ignores the page zoom: its highlight misses the target")
+
+    if "restoreView" in spotlight_js or "viewBeforeStart" in spotlight_js:
+        problems.append("closing SPOTLIGHT switches back to the starting tab instead of staying on the shown tab")
 
     return problems
 
