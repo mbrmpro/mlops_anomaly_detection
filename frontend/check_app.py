@@ -25,7 +25,9 @@ the API is offline (nothing listens on API_URL) and fails when the page
 * is not shown at 80 % with every tab filling one screen: the longest tab then
   needs scrolling and the bottom line moves from tab to tab,
 * has a tab without its bottom line,
-* lets SPOTLIGHT ignore the page zoom (the highlight misses its target).
+* lets SPOTLIGHT ignore the page zoom (the highlight misses its target),
+* switches back to the starting tab when SPOTLIGHT closes (the reader loses
+  the tab the last card showed).
 
 The live check (presentation readiness) needs the running stack with trained
 champion models and fails when
@@ -151,6 +153,9 @@ def offline_problems():
     if "zoomFactor()" not in spotlight_js:
         problems.append("SPOTLIGHT ignores the page zoom: its highlight misses the target")
 
+    if "restoreView" in spotlight_js or "viewBeforeStart" in spotlight_js:
+        problems.append("closing SPOTLIGHT switches back to the starting tab instead of staying on the shown tab")
+
     return problems
 
 
@@ -178,7 +183,7 @@ def live_problems(api_url):
     if app.error:
         problems.append(f"error box after 'Check': {app.error[0].value}")
 
-    if not any("Verdict:" in markdown.value for markdown in app.markdown):
+    if not any("Prediction:" in markdown.value for markdown in app.markdown):
         problems.append("no verdict after one click on 'Check'")
 
     # A verdict belongs to the category it was made for: after a switch it
@@ -187,7 +192,7 @@ def live_problems(api_url):
     other_category = next(option for option in ("bottle", "pill", "wood") if option != category_radio.value)
     category_radio.set_value(other_category).run()
 
-    if any("Verdict:" in markdown.value for markdown in app.markdown):
+    if any("Prediction:" in markdown.value for markdown in app.markdown):
         problems.append(f"the old verdict is still shown after switching to {other_category}")
 
     # The page keeps /metrics for 15 s: clear it so the average counts the
